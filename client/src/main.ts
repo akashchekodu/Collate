@@ -56,44 +56,45 @@ class P2PNotebookApp {
       this.showLoginScreen();
     }
   }
-
-  private async handleSharedDocument(shareCode: string, user: User) {
-    try {
-      console.log('🔗 Handling shared document:', shareCode);
+// In client/src/main.ts - handleSharedDocument method
+private async handleSharedDocument(shareCode: string, user: User) {
+  try {
+    console.log('🔗 Handling shared document with code:', shareCode);
+    
+    // Try to find existing document by share code
+    let document = await this.documentManager.getDocumentByShareCode(shareCode);
+    
+    if (!document) {
+      // Create a new local reference using the SAME share code
+      document = await this.documentManager.createDocument(user, `Shared Document ${shareCode}`);
+      document.shareCode = shareCode; // 🔑 KEY: Use the shared code
+      document.isShared = true;
+      await this.documentManager.saveDocument(document);
       
-      // Try to find document by share code
-      let document = await this.documentManager.getDocumentByShareCode(shareCode);
-      
-      if (!document) {
-        // Create a new local reference to the shared document
-        document = await this.documentManager.createDocument(user, `Shared Document ${shareCode}`);
-        document.shareCode = shareCode;
-        document.isShared = true;
-        await this.documentManager.saveDocument(document);
-        
-        this.showNotification('Joining shared document - content will sync from other peers!', 'info');
-      }
-
-      // Render UI and open the shared document
-      this.renderMainApp(user);
-      this.setupEventListeners();
-      await this.openDocument(document.id);
-      
-      // Clean up URL
-      window.history.replaceState({}, document.title, window.location.pathname);
-      
-      // Load other documents for sidebar
-      await this.loadDocuments();
-      this.renderDocumentList();
-
-    } catch (error: any) {
-      console.error('Error handling shared document:', error);
-      this.showNotification('Failed to join shared document', 'error');
-      
-      // Fallback to normal flow
-      await this.onUserLoggedIn(user);
+      this.showNotification('Joining shared document - content will sync from other peers!', 'info');
     }
+
+    // Render UI and open the shared document
+    this.renderMainApp(user);
+    this.setupEventListeners();
+    
+    // 🔑 KEY: Open using the document ID, but P2P will use share code
+    await this.openDocument(document.id);
+    
+    // Clean up URL
+    window.history.replaceState({}, document.title, window.location.pathname);
+    
+    // Load other documents for sidebar
+    await this.loadDocuments();
+    this.renderDocumentList();
+
+  } catch (error: any) {
+    console.error('Error handling shared document:', error);
+    this.showNotification('Failed to join shared document', 'error');
+    await this.onUserLoggedIn(user);
   }
+}
+
 
   private showLoginScreen() {
     document.getElementById('app')!.innerHTML = `

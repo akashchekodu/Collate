@@ -29,6 +29,25 @@ export interface P2PDocument {
   isShared: boolean;
 }
 
+// client/src/p2p-collaborative-editor.ts (DocumentManager section)
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  picture?: string;
+}
+
+export interface P2PDocument {
+  id: string;
+  title: string;
+  shareCode: string;
+  ownerId: string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  isShared: boolean;
+}
+
 export class P2PDocumentManager {
   private db: IDBDatabase | null = null;
   private static instance: P2PDocumentManager;
@@ -42,72 +61,80 @@ export class P2PDocumentManager {
     return P2PDocumentManager.instance;
   }
 
-  // Version-safe initialization: never downgrade; upgrade only if stores are missing
   async initialize(): Promise<void> {
-    const db = await this.openLatest(P2PDocumentManager.DB_NAME);
-    if (db.objectStoreNames.contains(P2PDocumentManager.DOC_STORE)) {
-      this.attachDb(db);
-      return;
-    }
-    const newVersion = db.version + 1;
-    db.close();
-    const upgradedDb = await this.upgradeDb(
-      P2PDocumentManager.DB_NAME,
-      newVersion,
-      (upgradeDb) => {
-        if (!upgradeDb.objectStoreNames.contains(P2PDocumentManager.DOC_STORE)) {
-          const store = upgradeDb.createObjectStore(P2PDocumentManager.DOC_STORE, { keyPath: 'id' });
-          if (!store.indexNames.contains('shareCode')) {
-            store.createIndex('shareCode', 'shareCode', { unique: true });
-          }
-          if (!store.indexNames.contains('ownerId')) {
-            store.createIndex('ownerId', 'ownerId', { unique: false });
-          }
-        }
-      }
-    );
-    this.attachDb(upgradedDb);
+    console.log('🔄 Initializing P2P Document Manager...');
+    
+    // Start fresh - delete existing database to avoid version conflicts
+    await this.deleteExistingDatabase();
+    
+    // Create new database with proper schema
+    const db = await this.createDatabase();
+    this.attachDb(db);
+    
+    console.log('✅ P2P Document Manager initialized successfully');
   }
 
-  private openLatest(name: string): Promise<IDBDatabase> {
+  private deleteExistingDatabase(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(name);
-      req.onerror = () => reject(req.error);
-      req.onblocked = () => console.warn('IndexedDB open blocked; another tab may hold an old connection');
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(P2PDocumentManager.DOC_STORE)) {
-          const store = db.createObjectStore(P2PDocumentManager.DOC_STORE, { keyPath: 'id' });
-          store.createIndex('shareCode', 'shareCode', { unique: true });
-          store.createIndex('ownerId', 'ownerId', { unique: false });
-        }
+      const deleteReq = indexedDB.deleteDatabase(P2PDocumentManager.DB_NAME);
+      
+      deleteReq.onsuccess = () => {
+        console.log('🗑️ Cleared existing database');
+        resolve();
       };
-      req.onsuccess = () => {
-        const db = req.result;
-        db.onversionchange = () => {
-          db.close();
-          console.warn('IndexedDB version changed; please reload this tab');
-        };
-        resolve(db);
+      
+      deleteReq.onerror = () => {
+        console.warn('Could not delete existing database:', deleteReq.error);
+        resolve(); // Continue anyway
+      };
+      
+      deleteReq.onblocked = () => {
+        console.warn('Database deletion blocked - close other tabs');
+        setTimeout(() => resolve(), 1000); // Continue after timeout
       };
     });
   }
 
-  private upgradeDb(name: string, version: number, onUpgrade: (db: IDBDatabase) => void): Promise<IDBDatabase> {
+  private createDatabase(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(name, version);
-      req.onerror = () => reject(req.error);
-      req.onblocked = () => console.warn('IndexedDB upgrade blocked; close other tabs using this database');
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        onUpgrade(db);
+      const req = indexedDB.open(P2PDocumentManager.DB_NAME, 1);
+      
+      req.onerror = () => {
+        console.error('Failed to open database:', req.error);
+        reject(req.error);
       };
+      
+      req.onblocked = () => {
+        console.warn('Database creation blocked');
+      };
+      
+      req.onupgradeneeded = (event) => {
+        console.log('🔧 Creating database schema...');
+        const db = req.result;
+        
+        // Create documents store with indexes
+        if (!db.objectStoreNames.contains(P2PDocumentManager.DOC_STORE)) {
+          const store = db.createObjectStore(P2PDocumentManager.DOC_STORE, { 
+            keyPath: 'id' 
+          });
+          
+          store.createIndex('shareCode', 'shareCode', { unique: true });
+          store.createIndex('ownerId', 'ownerId', { unique: false });
+          
+          console.log('✅ Created documents store with indexes');
+        }
+      };
+      
       req.onsuccess = () => {
         const db = req.result;
+        
+        // Handle version changes from other tabs
         db.onversionchange = () => {
+          console.warn('Database version changed - closing connection');
           db.close();
-          console.warn('IndexedDB version changed; please reload this tab');
         };
+        
+        console.log('📦 Database opened successfully');
         resolve(db);
       };
     });
@@ -117,8 +144,12 @@ export class P2PDocumentManager {
     this.db = db;
   }
 
-  async createDocument(user: { id: string }, title = 'Untitled Document'): Promise<P2PDocument> {
-  const now = new Date(); // ✅ Use Date object instead of string
+  async createDocument(user: User, title = 'Untitled Document'): Promise<P2PDocument> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    const now = new Date().toISOString();
     const doc: P2PDocument = {
       id: crypto.randomUUID(),
       title,
@@ -128,74 +159,115 @@ export class P2PDocumentManager {
       updatedAt: now,
       isShared: false
     };
+
     await this.saveDocument(doc);
+    console.log('📄 Created new document:', doc.title);
     return doc;
   }
 
   async getDocument(id: string): Promise<P2PDocument | null> {
     if (!this.db) return null;
+
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction([P2PDocumentManager.DOC_STORE], 'readonly');
-      const store = tx.objectStore(P2PDocumentManager.DOC_STORE);
-      const req = store.get(id);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
+      try {
+        const tx = this.db!.transaction([P2PDocumentManager.DOC_STORE], 'readonly');
+        const store = tx.objectStore(P2PDocumentManager.DOC_STORE);
+        const req = store.get(id);
+        
+        req.onsuccess = () => {
+          resolve(req.result || null);
+        };
+        
+        req.onerror = () => {
+          console.error('Error getting document:', req.error);
+          reject(req.error);
+        };
+      } catch (error) {
+        console.error('Transaction error:', error);
+        reject(error);
+      }
     });
   }
 
   async getDocumentByShareCode(shareCode: string): Promise<P2PDocument | null> {
     if (!this.db) return null;
+
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction([P2PDocumentManager.DOC_STORE], 'readonly');
-      const store = tx.objectStore(P2PDocumentManager.DOC_STORE);
-      const index = store.index('shareCode');
-      const req = index.get(shareCode);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
+      try {
+        const tx = this.db!.transaction([P2PDocumentManager.DOC_STORE], 'readonly');
+        const store = tx.objectStore(P2PDocumentManager.DOC_STORE);
+        const index = store.index('shareCode');
+        const req = index.get(shareCode);
+        
+        req.onsuccess = () => {
+          resolve(req.result || null);
+        };
+        
+        req.onerror = () => {
+          console.error('Error getting document by share code:', req.error);
+          reject(req.error);
+        };
+      } catch (error) {
+        console.error('Transaction error:', error);
+        reject(error);
+      }
     });
   }
 
   async getUserDocuments(userId: string): Promise<P2PDocument[]> {
     if (!this.db) return [];
+
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction([P2PDocumentManager.DOC_STORE], 'readonly');
-      const store = tx.objectStore(P2PDocumentManager.DOC_STORE);
-      const index = store.index('ownerId');
-      // Prefer getAll with key; fallback to cursor if needed
-      const req = (index.getAll as any)?.call(index, IDBKeyRange.only(userId)) as IDBRequest<P2PDocument[]>;
-      if (req) {
+      try {
+        const tx = this.db!.transaction([P2PDocumentManager.DOC_STORE], 'readonly');
+        const store = tx.objectStore(P2PDocumentManager.DOC_STORE);
+        const index = store.index('ownerId');
+        const req = index.getAll(userId);
+        
         req.onsuccess = () => {
-          const rows = req.result || [];
-          rows.sort((a, b) => new Date(b.updatedAt as any).getTime() - new Date(a.updatedAt as any).getTime());
-          resolve(rows);
+          const docs = req.result || [];
+          // Sort by updated date (newest first)
+          docs.sort((a, b) => {
+            const dateA = new Date(a.updatedAt).getTime();
+            const dateB = new Date(b.updatedAt).getTime();
+            return dateB - dateA;
+          });
+          resolve(docs);
         };
-        req.onerror = () => reject(req.error);
-      } else {
-        const results: P2PDocument[] = [];
-        index.openCursor(IDBKeyRange.only(userId)).onsuccess = (e: any) => {
-          const cursor = e.target.result as IDBCursorWithValue | null;
-          if (cursor) {
-            results.push(cursor.value);
-            cursor.continue();
-          } else {
-            results.sort((a, b) => new Date(b.updatedAt as any).getTime() - new Date(a.updatedAt as any).getTime());
-            resolve(results);
-          }
+        
+        req.onerror = () => {
+          console.error('Error getting user documents:', req.error);
+          reject(req.error);
         };
-        tx.onerror = () => reject(tx.error);
+      } catch (error) {
+        console.error('Transaction error:', error);
+        resolve([]); // Return empty array on error
       }
     });
   }
 
   async saveDocument(doc: P2PDocument): Promise<void> {
     if (!this.db) return;
+
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction([P2PDocumentManager.DOC_STORE], 'readwrite');
-      const store = tx.objectStore(P2PDocumentManager.DOC_STORE);
-      const payload = { ...doc, updatedAt: new Date().toISOString() };
-      const req = store.put(payload);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
+      try {
+        const tx = this.db!.transaction([P2PDocumentManager.DOC_STORE], 'readwrite');
+        const store = tx.objectStore(P2PDocumentManager.DOC_STORE);
+        const payload = { ...doc, updatedAt: new Date().toISOString() };
+        const req = store.put(payload);
+        
+        req.onsuccess = () => {
+          resolve();
+        };
+        
+        req.onerror = () => {
+          console.error('Error saving document:', req.error);
+          reject(req.error);
+        };
+      } catch (error) {
+        console.error('Transaction error:', error);
+        reject(error);
+      }
     });
   }
 
@@ -209,12 +281,25 @@ export class P2PDocumentManager {
 
   async deleteDocument(id: string): Promise<void> {
     if (!this.db) return;
+
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction([P2PDocumentManager.DOC_STORE], 'readwrite');
-      const store = tx.objectStore(P2PDocumentManager.DOC_STORE);
-      const req = store.delete(id);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
+      try {
+        const tx = this.db!.transaction([P2PDocumentManager.DOC_STORE], 'readwrite');
+        const store = tx.objectStore(P2PDocumentManager.DOC_STORE);
+        const req = store.delete(id);
+        
+        req.onsuccess = () => {
+          resolve();
+        };
+        
+        req.onerror = () => {
+          console.error('Error deleting document:', req.error);
+          reject(req.error);
+        };
+      } catch (error) {
+        console.error('Transaction error:', error);
+        reject(error);
+      }
     });
   }
 
@@ -238,59 +323,236 @@ export class P2PCollaborativeEditor {
   private documentManager: P2PDocumentManager;
 
   constructor() {
-    this.peerId = uuidv4();
-    this.documentManager = P2PDocumentManager.getInstance();
+    this.peerId = crypto.randomUUID();
+    this.documentManager = P2PDocumentManager.getInstance(); // This is already an instance
   }
 
-  async initialize(documentId: string, user: User): Promise<void> {
+async initialize(documentId: string, user: User): Promise<void> {
     console.log('🔄 Initializing P2P editor for:', documentId);
     this.user = user;
 
     // Get or create document
     let document = await this.documentManager.getDocument(documentId);
     if (!document) {
-      // Try to find by share code
-      document = await this.documentManager.getDocumentByShareCode(documentId);
-      if (!document) {
+        document = await this.documentManager.getDocumentByShareCode(documentId);
+        if (!document) {
         throw new Error('Document not found');
-      }
-    }
-
-    this.currentDocument = document;
-
-    // Setup editor UI
-    this.setupEditor();
-
-    // Initialize Y.js document
-    this.ydoc = new Y.Doc();
-
-    // Setup IndexedDB persistence (local storage)
-    this.indexedDbProvider = new IndexeddbPersistence(documentId, this.ydoc);
-
-    // Wait for local document to load
-    await new Promise<void>(resolve => {
-      this.indexedDbProvider!.once('synced', () => {
-        console.log('📦 Document loaded from local storage');
-        resolve();
-      });
-    });
-
-    // Setup WebRTC provider for P2P collaboration
-    this.webrtcProvider = new WebrtcProvider(documentId, this.ydoc, {
-      signaling: ['ws://localhost:3003/signal'],
-      password: `p2p-${documentId}`,
-      maxConns: 20,
-      filterBcConns: false
-    });
-
-    // Setup collaborative text
-    this.setupCollaborativeText();
-
-    // Connect to signaling server
-    this.connectToSignalingServer();
-
-    console.log('✅ P2P editor initialized');
+        }
   }
+  this.currentDocument = document;
+  const roomId = this.currentDocument.shareCode;
+  console.log(`🏠 Using room ID for P2P: ${roomId}`);
+
+  // Setup editor UI
+  this.setupEditor();
+
+  // Initialize Y.js document
+  this.ydoc = new Y.Doc();
+
+  // Setup IndexedDB persistence
+  this.indexedDbProvider = new IndexeddbPersistence(roomId, this.ydoc);
+
+  await new Promise<void>(resolve => {
+    this.indexedDbProvider!.once('synced', () => {
+      console.log('📦 Document loaded from local storage');
+      resolve();
+    });
+  });
+
+  // 🔑 FIX: Use public Y.js signaling servers for WebRTC, not your custom server
+  this.webrtcProvider = new WebrtcProvider(roomId, this.ydoc, {
+  signaling: ['ws://localhost:4444'],  // Use your server
+  password: `p2p-${roomId}`,
+  maxConns: 20,
+  filterBcConns: false
+});
+
+console.log('🔗 Using local signaling server for Yjs WebRTC');
+
+  // Setup awareness for collaborative cursors
+  this.webrtcProvider.awareness.setLocalStateField('user', {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    picture: user.picture,
+    color: this.getUserColor(user.id),
+    roomId: roomId
+  });
+
+  // Listen for WebRTC provider events
+  this.webrtcProvider.on('status', (event: any) => {
+    console.log('🔗 WebRTC status:', event.status);
+    this.updateConnectionStatus(event.status);
+  });
+
+  // Listen for awareness changes (peer join/leave)
+  this.webrtcProvider.awareness.on('change', () => {
+    this.updateWebRTCCollaborators();
+  });
+
+  // Setup collaborative text
+  this.setupCollaborativeText();
+
+  // Connect to your signaling server for additional peer discovery
+  this.connectToSignalingServer(roomId);
+
+  console.log('✅ P2P editor initialized for room:', roomId);
+}
+  
+
+// Add this method to P2PCollaborativeEditor
+private updateWebRTCCollaborators(): void {
+  if (!this.webrtcProvider) return;
+
+  const awarenessStates = this.webrtcProvider.awareness.getStates();
+  const peers = Array.from(awarenessStates.entries())
+    .filter(([clientId]) => clientId !== this.webrtcProvider!.awareness.clientID)
+    .map(([clientId, state]) => ({
+      id: clientId.toString(),
+      ...state.user
+    }))
+    .filter(peer => peer.name); // Only peers with user info
+
+  console.log('🎯 WebRTC peers found:', peers.length, peers.map(p => p.name));
+
+  // Update collaborators map
+  this.collaborators.clear();
+  peers.forEach(peer => {
+    this.collaborators.set(peer.id, peer);
+  });
+
+  // Update UI
+  this.updatePeerCount(peers.length);
+  this.renderCollaborators();
+
+  // Update connection status
+  if (peers.length > 0) {
+    this.updateP2PStatus(`Connected to ${peers.length} peer${peers.length === 1 ? '' : 's'}`);
+  } else {
+    this.updateP2PStatus('Searching for peers...');
+  }
+}
+
+private updateConnectionStatus(status: string): void {
+  console.log('🔗 WebRTC connection status:', status);
+  
+  switch (status) {
+    case 'connected':
+      this.updateP2PStatus('WebRTC Connected');
+      break;
+    case 'connecting':
+      this.updateP2PStatus('Connecting to peers...');
+      break;
+    case 'disconnected':
+      this.updateP2PStatus('Disconnected');
+      break;
+  }
+}
+private setupCollaborativeText(): void {
+  if (!this.ydoc || !this.textArea) return;
+
+  const ytext = this.ydoc.getText('content');
+  console.log('📝 Setting up collaborative text, initial content length:', ytext.length);
+
+  // Initialize textarea with Y.js content
+  this.textArea.value = ytext.toString();
+  this.updateWordCount();
+
+  // Listen for Y.js changes and update textarea
+  ytext.observe(event => {
+    console.log('🔄 Y.js text changed, delta length:', event.changes.delta.length);
+    
+    const currentContent = this.textArea!.value;
+    const newContent = ytext.toString();
+    
+    if (currentContent !== newContent) {
+      console.log('📝 Updating textarea with new content');
+      const cursorPos = this.textArea!.selectionStart;
+      this.textArea!.value = newContent;
+      this.textArea!.setSelectionRange(cursorPos, cursorPos);
+      this.updateWordCount();
+      this.updateSyncStatus('synced');
+    }
+  });
+
+  // Listen for textarea changes and update Y.js
+  let isUpdating = false;
+  this.textArea.addEventListener('input', (e) => {
+    if (isUpdating) return;
+    
+    const newContent = this.textArea!.value;
+    const currentYContent = ytext.toString();
+    
+    if (newContent !== currentYContent) {
+      console.log('⌨️ Textarea changed, updating Y.js');
+      isUpdating = true;
+      this.updateSyncStatus('syncing');
+      
+      // Replace entire content (simple approach)
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, newContent);
+      
+      setTimeout(() => {
+        this.updateSyncStatus('synced');
+        isUpdating = false;
+      }, 500);
+    }
+  });
+
+  console.log('✅ Collaborative text setup complete');
+}
+
+
+  private connectToSignalingServer(roomId: string): void {
+    const wsUrl = 'ws://localhost:3003/signal';
+    console.log('📡 Connecting to signaling server:', wsUrl);
+
+    this.signalingWs = new WebSocket(wsUrl);
+
+    this.signalingWs.onopen = () => {
+      console.log('📡 Connected to signaling server');
+      this.isConnected = true;
+      this.updateP2PStatus('Connected to peers');
+
+      // 🔑 KEY FIX: Join document room using SHARE CODE
+      this.signalingWs!.send(JSON.stringify({
+        type: 'join_document',
+        documentId: roomId, // Use share code as room identifier
+        peerId: this.peerId,
+        peerInfo: {
+          id: this.user!.id,
+          name: this.user!.name,
+          email: this.user!.email,
+          picture: this.user!.picture,
+          roomId: roomId
+        }
+      }));
+
+      // Send heartbeat every 30 seconds
+      setInterval(() => {
+        if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {
+          this.signalingWs.send(JSON.stringify({
+            type: 'peer_heartbeat',
+            peerId: this.peerId
+          }));
+        }
+      }, 30000);
+    }}
+private getUserColor(userId: string): string {
+  const colors = [
+    '#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16',
+    '#22c55e', '#10b981', '#14b8a6', '#06b6d4', '#0ea5e9',
+    '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef',
+    '#ec4899', '#f43f5e'
+  ];
+  
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = ((hash << 5) - hash + userId.charCodeAt(i)) & 0xffffffff;
+  }
+  
+  return colors[Math.abs(hash) % colors.length];
+}
 
   private setupEditor(): void {
     const container = document.getElementById('editor');
@@ -339,131 +601,56 @@ export class P2PCollaborativeEditor {
       this.updateWordCount();
     });
   }
+// Add this inside P2PCollaborativeEditor, alongside other private methods:
 
-  private setupCollaborativeText(): void {
-    if (!this.ydoc || !this.textArea) return;
+/**
+ * Updates the peer count display and collaborator avatars in the UI.
+ */
+private renderCollaborators(): void {
+  // Convert the collaborators Map to an array of collaborator objects
+  const collaboratorsList = Array.from(this.collaborators.values());
 
-    const ytext = this.ydoc.getText('content');
-
-    // Initialize textarea with Y.js content
-    this.textArea.value = ytext.toString();
-    this.updateWordCount();
-
-    // Listen for Y.js changes and update textarea
-    ytext.observe(event => {
-      const currentContent = this.textArea!.value;
-      const newContent = ytext.toString();
-      
-      if (currentContent !== newContent) {
-        const cursorPos = this.textArea!.selectionStart;
-        this.textArea!.value = newContent;
-        
-        // Restore cursor position (simple approach)
-        this.textArea!.setSelectionRange(cursorPos, cursorPos);
-        this.updateWordCount();
-        this.updateSyncStatus('synced');
-      }
-    });
-
-    // Listen for textarea changes and update Y.js
-    this.textArea.addEventListener('input', (e) => {
-      const newContent = this.textArea!.value;
-      const currentYContent = ytext.toString();
-      
-      if (newContent !== currentYContent) {
-        // Simple approach: replace entire content
-        // In production, you'd want diff-based updates
-        ytext.delete(0, ytext.length);
-        ytext.insert(0, newContent);
-        this.updateSyncStatus('syncing');
-      }
-    });
+  // Update the peer count text
+  const peerCountEl = document.getElementById('peer-list');
+  if (peerCountEl) {
+    const count = collaboratorsList.length;
+    peerCountEl.textContent = `${count} peer${count === 1 ? '' : 's'} connected`;
+    peerCountEl.style.color = count > 0 ? '#10b981' : '#64748b';
   }
 
-  private connectToSignalingServer(): void {
-    const wsUrl = 'ws://localhost:3003/signal';
-    console.log('📡 Connecting to signaling server:', wsUrl);
+  // Update the collaborator avatars container (if you have one in your HTML)
+  const collaboratorsEl = document.getElementById('collaborators');
+  if (collaboratorsEl) {
+    collaboratorsEl.innerHTML = collaboratorsList.slice(0, 5).map(collab => `
+      <div class="collaborator-avatar"
+           style="background-color: ${this.getUserColor(collab.id)}; 
+                  color: white; font-size: 10px; display: flex; 
+                  align-items: center; justify-content: center; 
+                  font-weight: 500; width: 24px; height: 24px; 
+                  border-radius: 50%; margin-left: -4px; border: 2px solid white;"
+           title="${collab.name} (${collab.email})">
+        ${collab.picture
+          ? `<img src="${collab.picture}" style="width:100%;height:100%;border-radius:50%">`
+          : collab.name.charAt(0).toUpperCase()}
+      </div>
+    `).join('');
 
-    this.signalingWs = new WebSocket(wsUrl);
-
-    this.signalingWs.onopen = () => {
-      console.log('📡 Connected to signaling server');
-      this.isConnected = true;
-      this.updateP2PStatus('Connected to peers');
-
-      // Join document room
-      this.signalingWs!.send(JSON.stringify({
-        type: 'join_document',
-        documentId: this.currentDocument!.id,
-        peerId: this.peerId,
-        peerInfo: {
-          id: this.user!.id,
-          name: this.user!.name,
-          email: this.user!.email,
-          picture: this.user!.picture
-        }
-      }));
-
-      // Send heartbeat every 30 seconds
-      setInterval(() => {
-        if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {
-          this.signalingWs.send(JSON.stringify({
-            type: 'peer_heartbeat',
-            peerId: this.peerId
-          }));
-        }
-      }, 30000);
-    };
-
-    this.signalingWs.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        this.handleSignalingMessage(message);
-      } catch (error) {
-        console.error('Error parsing signaling message:', error);
-      }
-    };
-
-    this.signalingWs.onclose = () => {
-      console.log('📡 Disconnected from signaling server');
-      this.isConnected = false;
-      this.updateP2PStatus('Disconnected - Working offline');
-      
-      // Attempt reconnection after 3 seconds
-      setTimeout(() => {
-        if (!this.isConnected) {
-          this.connectToSignalingServer();
-        }
-      }, 3000);
-    };
-
-    this.signalingWs.onerror = (error) => {
-      console.error('Signaling server error:', error);
-      this.updateP2PStatus('Connection error');
-    };
-  }
-
-  private handleSignalingMessage(message: any): void {
-    switch (message.type) {
-      case 'existing_peers':
-        console.log('👥 Found existing peers:', message.peers.length);
-        this.updatePeerCount(message.peers.length);
-        break;
-        
-      case 'peer_joined':
-        console.log('👤 Peer joined:', message.peerInfo.name);
-        this.collaborators.set(message.peerId, message.peerInfo);
-        this.updatePeerCount(this.collaborators.size);
-        this.showNotification(`${message.peerInfo.name} joined`);
-        break;
-        
-      case 'peer_left':
-        console.log('👤 Peer left:', message.peerId);
-        this.collaborators.delete(message.peerId);
-        this.updatePeerCount(this.collaborators.size);
-        break;
+    // If more than 5 peers, show +N
+    if (collaboratorsList.length > 5) {
+      const extra = collaboratorsList.length - 5;
+      collaboratorsEl.innerHTML += `
+        <div class="collaborator-avatar" 
+             style="background-color:#6b7280; color:white; font-size:10px; 
+                    display:flex; align-items:center; justify-content:center; 
+                    font-weight:500; width:24px; height:24px; 
+                    border-radius:50%; margin-left:-4px; border:2px solid white;"
+             title="${extra} more peers">
+          +${extra}
+        </div>
+      `;
     }
   }
+}
 
   private formatText(wrapper: string): void {
     if (!this.textArea) return;

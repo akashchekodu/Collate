@@ -1,3 +1,4 @@
+// p2p-signaling-server/p2p-signaling-server.js
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
@@ -34,6 +35,7 @@ wss.on('connection', (ws) => {
   ws.on('message', (data) => {
     try {
       const message = JSON.parse(data.toString());
+      console.log('📥 Received message:', message.type, 'from peer:', message.peerId, 'for room:', message.documentId);
       handleSignalingMessage(ws, message);
     } catch (error) {
       console.error('Invalid signaling message:', error);
@@ -41,32 +43,48 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    // Remove peer from all rooms
-    for (const [documentId, peers] of documentRooms) {
-      peers.delete(ws);
-      if (peers.size === 0) {
-        documentRooms.delete(documentId);
-      }
-    }
-
-    // Remove from peer sessions
+    console.log('📡 Peer connection closing...');
+    
+    // Find and remove this peer
+    let disconnectedPeerId = null;
+    let disconnectedRoom = null;
+    
     for (const [peerId, session] of peerSessions) {
       if (session.ws === ws) {
+        disconnectedPeerId = peerId;
+        disconnectedRoom = session.documentId;
         peerSessions.delete(peerId);
-        
-        // Notify other peers that this peer disconnected
-        if (session.documentId) {
-          broadcastToPeers(session.documentId, {
-            type: 'peer_left',
-            peerId: peerId,
-            timestamp: Date.now()
-          }, ws);
-        }
         break;
       }
     }
 
-    console.log('📡 Peer disconnected from signaling');
+    // Remove peer from all rooms
+    for (const [documentId, peers] of documentRooms) {
+      if (peers.delete(ws)) {
+        console.log(`🚪 Removed peer from room ${documentId}, ${peers.size} peers remaining`);
+        
+        // Notify other peers in this room
+        if (disconnectedPeerId && peers.size > 0) {
+          broadcastToPeers(documentId, {
+            type: 'peer_left',
+            peerId: disconnectedPeerId,
+            timestamp: Date.now()
+          }, null);
+        }
+        
+        // Clean up empty rooms
+        if (peers.size === 0) {
+          documentRooms.delete(documentId);
+          console.log(`🗑️ Removed empty room: ${documentId}`);
+        }
+      }
+    }
+
+    if (disconnectedPeerId) {
+      console.log(`📡 Peer ${disconnectedPeerId} disconnected from room ${disconnectedRoom}`);
+    } else {
+      console.log('📡 Unknown peer disconnected');
+    }
   });
 });
 
@@ -75,32 +93,38 @@ function handleSignalingMessage(ws, message) {
 
   switch (type) {
     case 'join_document':
+      console.log(`🚪 Processing join_document for peer ${peerId} in room ${documentId}`);
       joinDocumentRoom(ws, documentId, peerId, peerInfo);
       break;
     
     case 'webrtc_offer':
     case 'webrtc_answer':
     case 'webrtc_ice_candidate':
-      // Relay WebRTC signaling messages between peers
+      console.log(`🔄 Relaying ${type} message`);
       relaySignalingMessage(message);
       break;
     
     case 'request_document_state':
-      // Request full document state from existing peers
+      console.log(`📋 Document state requested for room ${documentId}`);
       requestDocumentFromPeers(documentId, peerId);
       break;
     
     case 'peer_heartbeat':
-      // Keep track of active peers
       updatePeerHeartbeat(peerId);
       break;
+      
+    default:
+      console.log(`❓ Unknown message type: ${type}`);
   }
 }
 
 function joinDocumentRoom(ws, documentId, peerId, peerInfo) {
+  console.log(`🏠 Adding peer ${peerInfo.name} (${peerId}) to room ${documentId}`);
+  
   // Add to document room
   if (!documentRooms.has(documentId)) {
     documentRooms.set(documentId, new Set());
+    console.log(`🆕 Created new room: ${documentId}`);
   }
   documentRooms.get(documentId).add(ws);
 
@@ -115,47 +139,76 @@ function joinDocumentRoom(ws, documentId, peerId, peerInfo) {
   // Get list of existing peers in this document
   const existingPeers = Array.from(peerSessions.values())
     .filter(session => session.documentId === documentId && session.ws !== ws)
-    .map(session => ({
-      peerId: Array.from(peerSessions.entries()).find(([id, sess]) => sess === session)?.[0],
-      peerInfo: session.peerInfo
-    }));
+    .map(session => {
+      const sessionPeerId = Array.from(peerSessions.entries())
+        .find(([id, sess]) => sess === session)?.[0];
+      return {
+        peerId: sessionPeerId,
+        peerInfo: session.peerInfo
+      };
+    });
+
+  console.log(`👥 Found ${existingPeers.length} existing peers in room ${documentId}:`, existingPeers.map(p => p.peerInfo?.name));
 
   // Send existing peers to new peer
-  ws.send(JSON.stringify({
+  const existingPeersMessage = {
     type: 'existing_peers',
     documentId,
     peers: existingPeers,
     timestamp: Date.now()
-  }));
+  };
+  
+  console.log(`📤 Sending existing_peers to new peer:`, existingPeersMessage);
+  ws.send(JSON.stringify(existingPeersMessage));
 
   // Notify existing peers about new peer
-  broadcastToPeers(documentId, {
-    type: 'peer_joined',
-    documentId,
-    peerId,
-    peerInfo,
-    timestamp: Date.now()
-  }, ws);
+  if (existingPeers.length > 0) {
+    const peerJoinedMessage = {
+      type: 'peer_joined',
+      documentId,
+      peerId,
+      peerInfo,
+      timestamp: Date.now()
+    };
+    
+    console.log(`📢 Broadcasting peer_joined to ${existingPeers.length} existing peers:`, peerJoinedMessage);
+    broadcastToPeers(documentId, peerJoinedMessage, ws);
+  } else {
+    console.log(`🔇 No existing peers to notify about new peer ${peerInfo.name}`);
+  }
 
-  console.log(`📡 Peer ${peerInfo.name} joined document room: ${documentId}`);
+  // Log current room state
+  const roomSize = documentRooms.get(documentId)?.size || 0;
+  console.log(`📊 Room ${documentId} now has ${roomSize} connected peers`);
+  
+  console.log(`✅ Peer ${peerInfo.name} successfully joined room ${documentId}`);
 }
 
 function relaySignalingMessage(message) {
   const { targetPeerId } = message;
   
-  if (!targetPeerId) return;
+  if (!targetPeerId) {
+    console.log('❌ No targetPeerId in relay message');
+    return;
+  }
   
   const targetSession = peerSessions.get(targetPeerId);
   if (targetSession) {
+    console.log(`📨 Relaying message to peer ${targetPeerId}`);
     targetSession.ws.send(JSON.stringify(message));
+  } else {
+    console.log(`❌ Target peer ${targetPeerId} not found for relay`);
   }
 }
 
 function requestDocumentFromPeers(documentId, requestingPeerId) {
   const peers = documentRooms.get(documentId);
-  if (!peers) return;
+  if (!peers) {
+    console.log(`❌ No peers found in room ${documentId} for document request`);
+    return;
+  }
 
-  // Ask any existing peer to send document state
+  console.log(`📋 Requesting document state from peers in room ${documentId}`);
   broadcastToPeers(documentId, {
     type: 'document_state_request',
     requestingPeerId,
@@ -172,34 +225,47 @@ function updatePeerHeartbeat(peerId) {
 
 function broadcastToPeers(documentId, message, excludeWs = null) {
   const peers = documentRooms.get(documentId);
-  if (!peers) return;
+  if (!peers) {
+    console.log(`❌ No peers in room ${documentId} to broadcast to`);
+    return;
+  }
 
   const messageStr = JSON.stringify(message);
+  let successCount = 0;
+  let totalPeers = 0;
+  
   peers.forEach(peerWs => {
+    totalPeers++;
     if (peerWs !== excludeWs && peerWs.readyState === 1) {
       try {
         peerWs.send(messageStr);
+        successCount++;
       } catch (error) {
         console.error('Error sending to peer:', error);
       }
     }
   });
+  
+  console.log(`📡 Broadcast ${message.type} to ${successCount}/${totalPeers} peers in room ${documentId}`);
 }
 
-// Cleanup inactive peers every 30 seconds
+// Enhanced cleanup with logging
 setInterval(() => {
   const now = Date.now();
   const timeout = 60000; // 1 minute timeout
 
+  let cleanedCount = 0;
   for (const [peerId, session] of peerSessions) {
     if (now - session.lastHeartbeat > timeout) {
       console.log(`🧹 Cleaning up inactive peer: ${peerId}`);
+      cleanedCount++;
       
       // Remove from rooms
       for (const [documentId, peers] of documentRooms) {
         peers.delete(session.ws);
         if (peers.size === 0) {
           documentRooms.delete(documentId);
+          console.log(`🗑️ Removed empty room during cleanup: ${documentId}`);
         }
       }
       
@@ -212,9 +278,13 @@ setInterval(() => {
       }
     }
   }
+  
+  if (cleanedCount > 0) {
+    console.log(`🧹 Cleaned up ${cleanedCount} inactive peers`);
+  }
 }, 30000);
 
-// Health check endpoint
+// Enhanced status endpoints
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok',
@@ -225,18 +295,25 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Server status
 app.get('/status', (req, res) => {
   const documents = Array.from(documentRooms.entries()).map(([docId, peers]) => ({
     documentId: docId,
-    peerCount: peers.size
+    peerCount: peers.size,
+    peers: Array.from(peerSessions.values())
+      .filter(session => session.documentId === docId)
+      .map(session => ({
+        peerId: Array.from(peerSessions.entries()).find(([id, sess]) => sess === session)?.[0],
+        name: session.peerInfo?.name,
+        lastSeen: new Date(session.lastHeartbeat).toISOString()
+      }))
   }));
 
   res.json({
     server: 'P2P Signaling Only - No Document Storage',
     activeDocuments: documents,
     totalPeers: peerSessions.size,
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    rooms: Array.from(documentRooms.keys())
   });
 });
 
