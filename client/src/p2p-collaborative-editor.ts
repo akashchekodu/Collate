@@ -361,10 +361,12 @@ async initialize(documentId: string, user: User): Promise<void> {
 
   // 🔑 FIX: Use public Y.js signaling servers for WebRTC, not your custom server
   this.webrtcProvider = new WebrtcProvider(roomId, this.ydoc, {
-  signaling: ['ws://localhost:4444'],  // Use your server
-  password: `p2p-${roomId}`,
-  maxConns: 20,
-  filterBcConns: false
+    // signaling: ['wss://signaling.yjs.dev', 'wss://y-webrtc-signaling-eu.herokuapp.com', 'wss://y-webrtc-signaling-us.herokuapp.com'],
+
+    signaling: ['ws://localhost:4444'],  // npx y-webrtc --port 3003
+    password: `p2p-${roomId}`,
+    maxConns: 20,
+    filterBcConns: false
 });
 
 console.log('🔗 Using local signaling server for Yjs WebRTC');
