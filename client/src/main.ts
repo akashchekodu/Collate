@@ -1,33 +1,38 @@
-// Import CSS
-import './styles.css';
-
 import { AuthManager, User } from './auth';
-import { CollaborativeEditor, DocumentAPI, Document } from './server-based-editor';
+import { P2PCollaborativeEditor, P2PDocumentManager, P2PDocument } from './p2p-collaborative-editor';
 
-class GoogleDocsCloneApp {
+class P2PNotebookApp {
   private auth: AuthManager;
-  private documentAPI: DocumentAPI;
-  private editor: CollaborativeEditor;
-  private currentDocument: Document | null = null;
-  private documents: Document[] = [];
+  private documentManager: P2PDocumentManager;
+  private editor: P2PCollaborativeEditor;
+  private currentDocument: P2PDocument | null = null;
+  private documents: P2PDocument[] = [];
 
   constructor() {
     this.auth = AuthManager.getInstance();
-    this.documentAPI = new DocumentAPI();
-    this.editor = new CollaborativeEditor();
+    this.documentManager = P2PDocumentManager.getInstance();
+    this.editor = new P2PCollaborativeEditor();
     this.init();
   }
 
   private async init() {
+    // Initialize document manager
+    try {
+      await this.documentManager.initialize();
+      console.log('✅ P2P Document Manager initialized');
+    } catch (error) {
+      console.error('Failed to initialize document manager:', error);
+    }
+
     // Check for shared document in URL
     const urlParams = new URLSearchParams(window.location.search);
-    const sharedDocCode = urlParams.get('doc');
+    const shareCode = urlParams.get('share');
 
     this.auth.onAuthChange(async (user) => {
       if (user) {
-        if (sharedDocCode) {
-          // User clicked on a shared link
-          await this.handleSharedDocument(sharedDocCode, user);
+        if (shareCode) {
+          // Handle shared document
+          await this.handleSharedDocument(shareCode, user);
         } else {
           // Normal app flow
           await this.onUserLoggedIn(user);
@@ -37,11 +42,12 @@ class GoogleDocsCloneApp {
       }
     });
 
+    // Check initial auth state
     if (this.auth.isAuthenticated()) {
       const user = this.auth.getUser();
       if (user) {
-        if (sharedDocCode) {
-          await this.handleSharedDocument(sharedDocCode, user);
+        if (shareCode) {
+          await this.handleSharedDocument(shareCode, user);
         } else {
           await this.onUserLoggedIn(user);
         }
@@ -50,56 +56,61 @@ class GoogleDocsCloneApp {
       this.showLoginScreen();
     }
   }
-
-  private async handleSharedDocument(shareCode: string, user: User) {
-    try {
-      console.log('🔗 Opening shared document:', shareCode);
+// In client/src/main.ts - handleSharedDocument method
+private async handleSharedDocument(shareCode: string, user: User) {
+  try {
+    console.log('🔗 Handling shared document with code:', shareCode);
+    
+    // Try to find existing document by share code
+    let document = await this.documentManager.getDocumentByShareCode(shareCode);
+    
+    if (!document) {
+      // Create a new local reference using the SAME share code
+      document = await this.documentManager.createDocument(user, `Shared Document ${shareCode}`);
+      document.shareCode = shareCode; // 🔑 KEY: Use the shared code
+      document.isShared = true;
+      await this.documentManager.saveDocument(document);
       
-      // Join the shared document
-      this.currentDocument = await this.documentAPI.joinDocument(shareCode, user);
-      
-      // Render the UI with the shared document
-      this.renderMainApp(user);
-      this.setupEventListeners();
-      
-      // Initialize the editor with the shared document
-      await this.editor.initialize(this.currentDocument.id, user);
-      
-      // Update the title input
-      const titleInput = document.getElementById('document-title') as HTMLInputElement;
-      if (titleInput) {
-        titleInput.value = this.currentDocument.title;
-      }
-      
-      // Show success notification
-      this.showNotification(`Joined "${this.currentDocument.title}" - you can now collaborate in real-time!`, 'success');
-      
-      // Clean up URL
-      window.history.replaceState({}, document.title, window.location.pathname);
-      
-      // Load user's other documents in sidebar
-      await this.loadDocuments();
-      this.renderDocumentList();
-      
-    } catch (error: any) {
-      console.error('Error opening shared document:', error);
-      this.showNotification(error.message || 'Failed to open shared document', 'error');
-      
-      // Fall back to normal flow
-      await this.onUserLoggedIn(user);
+      this.showNotification('Joining shared document - content will sync from other peers!', 'info');
     }
+
+    // Render UI and open the shared document
+    this.renderMainApp(user);
+    this.setupEventListeners();
+    
+    // 🔑 KEY: Open using the document ID, but P2P will use share code
+    await this.openDocument(document.id);
+    
+    // Clean up URL
+    window.history.replaceState({}, document.title, window.location.pathname);
+    
+    // Load other documents for sidebar
+    await this.loadDocuments();
+    this.renderDocumentList();
+
+  } catch (error: any) {
+    console.error('Error handling shared document:', error);
+    this.showNotification('Failed to join shared document', 'error');
+    await this.onUserLoggedIn(user);
   }
+}
+
 
   private showLoginScreen() {
     document.getElementById('app')!.innerHTML = `
-      <div class="login-container">
-        <div class="login-card">
-          <div class="login-logo">📄 Collaborative Notebook</div>
-          <p class="login-subtitle">Real-time collaboration like Google Docs</p>
-          <button class="google-login-btn" id="google-login">
-            <div class="google-icon">G</div>
+      <div style="display: flex; align-items: center; justify-content: center; height: 100vh; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+        <div style="background: white; padding: 48px; border-radius: 12px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); text-align: center; max-width: 400px; width: 90%;">
+          <div style="font-size: 28px; font-weight: 700; color: #1e293b; margin-bottom: 16px;">📝 P2P Notebook</div>
+          <p style="color: #64748b; margin-bottom: 32px; font-size: 16px;">Pure peer-to-peer collaboration<br>No servers, no databases</p>
+          <button id="google-login" style="display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; padding: 12px 24px; background: #4285f4; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: 500; cursor: pointer; transition: background-color 0.2s;">
+            <div style="width: 20px; height: 20px; background: white; color: #4285f4; border-radius: 2px; display: flex; align-items: center; justify-content: center; font-weight: bold;">G</div>
             Continue with Google
           </button>
+          <div style="margin-top: 24px; font-size: 12px; color: #94a3b8;">
+            <p>🔄 Documents stored locally in your browser</p>
+            <p>🌐 Real-time sync via WebRTC P2P</p>
+            <p>🔒 No data leaves your control</p>
+          </div>
         </div>
       </div>
     `;
@@ -114,7 +125,6 @@ class GoogleDocsCloneApp {
     this.renderMainApp(user);
     this.setupEventListeners();
     
-    // Open first document or create new one
     if (this.documents.length > 0) {
       await this.openDocument(this.documents[0].id);
     } else {
@@ -126,7 +136,7 @@ class GoogleDocsCloneApp {
     const user = this.auth.getUser();
     if (user) {
       try {
-        this.documents = await this.documentAPI.getUserDocuments(user.id);
+        this.documents = await this.documentManager.getUserDocuments(user.id);
       } catch (error) {
         console.error('Error loading documents:', error);
         this.documents = [];
@@ -136,72 +146,94 @@ class GoogleDocsCloneApp {
 
   private renderMainApp(user: User) {
     document.getElementById('app')!.innerHTML = `
-      <div class="app-container">
-        <div class="sidebar">
-          <div class="sidebar-header">
-            <div class="logo">📄 Collaborative Notebook</div>
-            <div class="user-info">
-              <div class="user-avatar">
-                ${user.picture ? `<img src="${user.picture}" alt="">` : user.name.charAt(0).toUpperCase()}
+      <div style="display: flex; height: 100vh; overflow: hidden; font-family: Inter, sans-serif;">
+        <!-- Sidebar -->
+        <div style="width: 280px; background: white; border-right: 1px solid #e2e8f0; display: flex; flex-direction: column;">
+          <!-- Header -->
+          <div style="padding: 20px; border-bottom: 1px solid #e2e8f0;">
+            <div style="font-size: 18px; font-weight: 700; color: #1e293b; margin-bottom: 12px;">📝 P2P Notebook</div>
+            <div style="font-size: 10px; color: #10b981; background: #f0fdf4; padding: 4px 8px; border-radius: 4px; text-align: center; margin-bottom: 16px;">
+              🔄 PURE P2P • NO SERVERS
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 12px; padding: 12px; background: #f1f5f9; border-radius: 8px;">
+              <div style="width: 32px; height: 32px; border-radius: 50%; background: #3b82f6; display: flex; align-items: center; justify-content: center; color: white; font-weight: 500; font-size: 14px; overflow: hidden;">
+                ${user.picture ? `<img src="${user.picture}" alt="" style="width: 100%; height: 100%; border-radius: 50%;">` : user.name.charAt(0).toUpperCase()}
               </div>
-              <div class="user-details">
-                <h3>${user.name}</h3>
-                <p>${user.email}</p>
+              <div style="flex: 1; min-width: 0;">
+                <div style="font-size: 14px; font-weight: 500; color: #1e293b; truncate;">${user.name}</div>
+                <div style="font-size: 12px; color: #64748b; truncate;">${user.email}</div>
               </div>
             </div>
           </div>
           
-          <div class="sidebar-content">
-            <button class="new-doc-btn" id="new-doc-btn">+ New Document</button>
+          <!-- Content -->
+          <div style="flex: 1; overflow-y: auto; padding: 20px;">
+            <button id="new-doc-btn" style="background: #3b82f6; color: white; border: none; padding: 12px 16px; border-radius: 6px; font-weight: 500; cursor: pointer; margin-bottom: 16px; width: 100%; transition: background-color 0.2s;">
+              + New P2P Document
+            </button>
             
-            <div class="search-container">
-              <input type="text" class="search-input" id="search-input" placeholder="Search documents...">
+            <div style="position: relative; margin-bottom: 16px;">
+              <input type="text" id="search-input" placeholder="Search documents..." style="width: 100%; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px; outline: none;">
             </div>
             
-            <div class="documents-section">
-              <h4>My Documents</h4>
-              <ul class="document-list" id="document-list">
+            <div>
+              <h4 style="font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 12px;">My Documents</h4>
+              <ul id="document-list" style="list-style: none; padding: 0; margin: 0;">
                 <!-- Documents will be inserted here -->
               </ul>
             </div>
           </div>
         </div>
 
-        <div class="main-content">
-          <div class="editor-header">
-            <input type="text" class="document-title-input" id="document-title" placeholder="Untitled Document">
+        <!-- Main Content -->
+        <div style="flex: 1; display: flex; flex-direction: column;">
+          <!-- Header -->
+          <div style="background: white; border-bottom: 1px solid #e2e8f0; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; gap: 16px;">
+            <input type="text" id="document-title" placeholder="Untitled Document" style="font-size: 18px; font-weight: 600; border: none; outline: none; background: transparent; flex: 1; color: #1e293b;">
             
-            <div class="editor-actions">
-              <div class="collaboration-info">
-                <div class="status-indicator"></div>
-                <span id="connection-status">Connected</span>
-                <div class="collaborators" id="collaborators"></div>
-                <span id="peer-count">0 collaborators</span>
-                <span id="save-status"></span>
+            <div style="display: flex; gap: 12px; align-items: center;">
+              <div style="display: flex; align-items: center; gap: 8px; font-size: 14px; color: #64748b;">
+                <div style="width: 8px; height: 8px; border-radius: 50%; background: #10b981;"></div>
+                <span id="connection-status">P2P Connected</span>
               </div>
               
-              <button class="action-btn" id="share-btn">Share</button>
-              <button class="action-btn" id="export-btn">Export</button>
-              <button class="action-btn" id="logout-btn">Logout</button>
+              <button id="share-btn" style="padding: 8px 16px; border: 1px solid #e2e8f0; background: white; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s;">
+                Share P2P
+              </button>
+              <button id="export-btn" style="padding: 8px 16px; border: 1px solid #e2e8f0; background: white; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s;">
+                Export
+              </button>
+              <button id="logout-btn" style="padding: 8px 16px; border: 1px solid #e2e8f0; background: white; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s;">
+                Logout
+              </button>
             </div>
           </div>
 
-          <div class="editor-container">
-            <div id="editor"></div>
-            <div id="typing-status" style="display: none; padding: 8px 24px; font-size: 12px; color: #64748b; background: #f8fafc; border-top: 1px solid #e2e8f0;"></div>
+          <!-- Editor Container -->
+          <div style="flex: 1; background: white; margin: 24px; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden; display: flex; flex-direction: column;">
+            <div id="editor" style="flex: 1;"></div>
           </div>
         </div>
       </div>
 
       <!-- Share Modal -->
-      <div id="share-modal" class="modal" style="display: none;">
-        <div class="modal-content">
-          <h3>Share Document</h3>
-          <p>Anyone with this link can view and edit this document:</p>
-          <input type="text" id="share-link" readonly class="share-link-input">
-          <div class="modal-actions">
-            <button id="copy-link-btn" class="primary-btn">Copy Link</button>
-            <button id="close-modal-btn" class="secondary-btn">Close</button>
+      <div id="share-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="background: white; padding: 32px; border-radius: 12px; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);">
+          <h3 style="font-size: 20px; font-weight: 600; margin-bottom: 12px; color: #1e293b;">Share P2P Document</h3>
+          <p style="color: #64748b; margin-bottom: 20px;">Share this link for real-time P2P collaboration:</p>
+          <input type="text" id="share-link" readonly style="width: 100%; padding: 12px 16px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px; background: #f8fafc; margin-bottom: 20px;">
+          <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 12px; margin-bottom: 20px;">
+            <div style="font-size: 12px; color: #166534; font-weight: 500; margin-bottom: 4px;">🔄 Pure P2P Sharing</div>
+            <div style="font-size: 11px; color: #15803d;">• No servers store your document<br>• Direct browser-to-browser connection<br>• Content syncs when peers are online</div>
+          </div>
+          <div style="display: flex; gap: 12px; justify-content: flex-end;">
+            <button id="copy-link-btn" style="background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-weight: 500; cursor: pointer;">
+              Copy Link
+            </button>
+            <button id="close-modal-btn" style="background: white; color: #64748b; border: 1px solid #e2e8f0; padding: 10px 20px; border-radius: 6px; font-weight: 500; cursor: pointer;">
+              Close
+            </button>
           </div>
         </div>
       </div>
@@ -240,6 +272,7 @@ class GoogleDocsCloneApp {
 
     // Logout
     document.getElementById('logout-btn')?.addEventListener('click', () => {
+      this.cleanup();
       this.auth.logout();
     });
 
@@ -265,10 +298,12 @@ class GoogleDocsCloneApp {
     if (!user) return;
 
     try {
-      const newDoc = await this.documentAPI.createDocument(user);
+      const newDoc = await this.documentManager.createDocument(user, 'Untitled Document');
       await this.loadDocuments();
       this.renderDocumentList();
       await this.openDocument(newDoc.id);
+      
+      this.showNotification('New P2P document created!', 'success');
     } catch (error) {
       console.error('Error creating document:', error);
       this.showNotification('Failed to create document', 'error');
@@ -280,9 +315,14 @@ class GoogleDocsCloneApp {
     if (!user) return;
 
     try {
-      this.currentDocument = await this.documentAPI.getDocument(documentId, user.id);
+      this.cleanup(); // Clean up previous editor
       
-      // Initialize editor
+      this.currentDocument = await this.documentManager.getDocument(documentId);
+      if (!this.currentDocument) {
+        throw new Error('Document not found');
+      }
+
+      // Initialize P2P editor
       await this.editor.initialize(documentId, user);
       
       // Update UI
@@ -330,10 +370,13 @@ class GoogleDocsCloneApp {
 
     listElement.innerHTML = this.documents.map(doc => `
       <li class="document-item ${doc.id === this.currentDocument?.id ? 'active' : ''}" 
-          data-doc-id="${doc.id}">
-        <div class="document-title">${doc.title}</div>
-        <div class="document-meta">
-          ${new Date(doc.updatedAt).toLocaleDateString()} • ${doc.userPermission}
+          data-doc-id="${doc.id}"
+          style="padding: 12px; border-radius: 6px; cursor: pointer; transition: background-color 0.2s; border: 1px solid transparent; margin-bottom: 4px; ${doc.id === this.currentDocument?.id ? 'background: #eff6ff; border-color: #dbeafe; color: #1d4ed8;' : ''}">
+        <div class="document-title" style="font-size: 14px; font-weight: 500; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+          ${doc.isShared ? '🔄' : '📄'} ${doc.title}
+        </div>
+        <div style="font-size: 12px; color: #64748b;">
+          ${new Date(doc.updatedAt).toLocaleDateString()} ${doc.isShared ? '• P2P Shared' : '• Local'}
         </div>
       </li>
     `).join('');
@@ -343,10 +386,28 @@ class GoogleDocsCloneApp {
       const item = (e.target as Element).closest('.document-item');
       if (item) {
         const docId = item.getAttribute('data-doc-id');
-        if (docId) {
+        if (docId && docId !== this.currentDocument?.id) {
           await this.openDocument(docId);
         }
       }
+    });
+
+    // Add hover effects
+    const items = listElement.querySelectorAll('.document-item');
+    items.forEach(item => {
+      item.addEventListener('mouseenter', () => {
+        if (!item.classList.contains('active')) {
+          (item as HTMLElement).style.background = '#f8fafc';
+          (item as HTMLElement).style.borderColor = '#e2e8f0';
+        }
+      });
+      
+      item.addEventListener('mouseleave', () => {
+        if (!item.classList.contains('active')) {
+          (item as HTMLElement).style.background = '';
+          (item as HTMLElement).style.borderColor = 'transparent';
+        }
+      });
     });
   }
 
@@ -375,11 +436,11 @@ class GoogleDocsCloneApp {
     if (linkInput) {
       try {
         await navigator.clipboard.writeText(linkInput.value);
-        this.showNotification('Link copied! Share it with others to collaborate.', 'success');
+        this.showNotification('P2P share link copied! Others can join for real-time collaboration.', 'success');
       } catch (err) {
         linkInput.select();
         document.execCommand('copy');
-        this.showNotification('Link copied! Share it with others to collaborate.', 'success');
+        this.showNotification('P2P share link copied! Others can join for real-time collaboration.', 'success');
       }
     }
   }
@@ -397,23 +458,45 @@ class GoogleDocsCloneApp {
     URL.revokeObjectURL(url);
   }
 
-  private showNotification(message: string, type: 'success' | 'error' = 'success') {
+  private cleanup() {
+    if (this.editor) {
+      this.editor.cleanup();
+    }
+  }
+
+  private showNotification(message: string, type: 'success' | 'error' | 'info' = 'success') {
     const notification = document.createElement('div');
-    notification.className = `notification ${type}`;
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 16px 20px;
+      border-radius: 8px;
+      font-weight: 500;
+      z-index: 1001;
+      max-width: 350px;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
+      background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'};
+      color: white;
+    `;
     notification.textContent = message;
     
     document.body.appendChild(notification);
     
     // Animate in
-    setTimeout(() => notification.classList.add('show'), 100);
+    setTimeout(() => {
+      notification.style.transform = 'translateX(0)';
+    }, 100);
     
     // Remove after delay
     setTimeout(() => {
-      notification.classList.remove('show');
+      notification.style.transform = 'translateX(100%)';
       setTimeout(() => notification.remove(), 300);
-    }, 3000);
+    }, 4000);
   }
 }
 
-// Start the application
-new GoogleDocsCloneApp();
+// Start the P2P application
+new P2PNotebookApp();
