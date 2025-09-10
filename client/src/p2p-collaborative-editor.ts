@@ -334,7 +334,7 @@ export class P2PCollaborativeEditor {
     // Setup WebRTC provider
     this.webrtcProvider = new WebrtcProvider(roomId, this.ydoc, {
     
-    //   signaling: ['ws://localhost:4444'],  // npx y-webrtc --port 3003
+      signaling: ['ws://localhost:4444'],  // npx y-webrtc --port 3003
       password: `p2p-${roomId}`,
       maxConns: 20,
       filterBcConns: false
