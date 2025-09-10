@@ -27,13 +27,13 @@ export class CollaborativeEditor {
   private autoSaveTimeout: number | null = null;
   private isLiveRoom: boolean = false;
   private isInitializing: boolean = false;
+  private yXmlFragment: Y.XmlFragment | null = null;
 
   constructor() {
     // Don't create Y.Doc here - create it in initialize()
   }
 
   async initialize(documentId: string, initialContent: string, user: User, isLiveRoom: boolean = false) {
-    // Prevent concurrent initialization
     if (this.isInitializing) {
       console.warn('Editor initialization already in progress...');
       return;
@@ -48,16 +48,14 @@ export class CollaborativeEditor {
 
       console.log(`🎯 Initializing ${this.isLiveRoom ? 'live room' : 'document'}:`, documentId);
 
-      // CRITICAL: Complete cleanup before creating new instances
+      // Complete cleanup before creating new instances
       await this.cleanup();
-
-      // Wait a bit to ensure cleanup is complete
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      // Create fresh Y.Doc for this document/room
+      // Create fresh Y.Doc
       this.ydoc = new Y.Doc();
 
-      // Setup offline persistence
+      // Setup persistence
       const persistenceKey = this.isLiveRoom ? `room-${documentId}` : documentId;
       this.persistence = new IndexeddbPersistence(persistenceKey, this.ydoc);
       
@@ -68,7 +66,7 @@ export class CollaborativeEditor {
         });
       });
 
-      // Setup WebRTC provider for P2P sync
+      // Setup WebRTC provider
       this.provider = new WebrtcProvider(documentId, this.ydoc, {
         signaling: ['ws://localhost:4444'],
         password: this.isLiveRoom ? 
@@ -78,7 +76,7 @@ export class CollaborativeEditor {
         filterBcConns: false
       });
 
-      // Set user information for awareness
+      // Set user awareness
       this.provider.awareness.setLocalStateField('user', {
         name: user.name,
         email: user.email,
@@ -88,7 +86,7 @@ export class CollaborativeEditor {
         isRoom: this.isLiveRoom
       });
 
-      // Enhanced connection handling
+      // Connection handling
       this.provider.on('status', (event: any) => {
         console.log(`${this.isLiveRoom ? 'Room' : 'Document'} provider status:`, event.status);
         this.updateConnectionStatus(event.status);
@@ -96,14 +94,13 @@ export class CollaborativeEditor {
 
       this.provider.awareness.on('change', () => {
         this.updateCollaborators();
-        
         if (this.isLiveRoom) {
           this.handleRoomPeerChange();
         }
       });
 
-      // Initialize the ProseMirror editor
-      this.initializeProseMirror(initialContent);
+      // Initialize ProseMirror AFTER Y.js is ready
+      await this.initializeProseMirror(initialContent);
 
       console.log(`🔗 Collaborative editor initialized for ${this.isLiveRoom ? 'room' : 'document'}:`, documentId);
 
@@ -117,10 +114,8 @@ export class CollaborativeEditor {
 
   private handleRoomPeerChange() {
     if (!this.provider) return;
-    
-    const peerCount = this.provider.awareness.getStates().size || 0;
-    
-    if (peerCount === 2) {
+    const peerCount = this.provider.awareness.getStates().size - 1;
+    if (peerCount === 1) {
       this.showConnectionNotification('Another user joined the room!', 'success');
     }
   }
@@ -128,33 +123,21 @@ export class CollaborativeEditor {
   private showConnectionNotification(message: string, type: 'success' | 'info' | 'warning') {
     const notification = document.createElement('div');
     notification.style.cssText = `
-      position: fixed;
-      top: 80px;
-      right: 20px;
-      padding: 8px 12px;
+      position: fixed; top: 80px; right: 20px; padding: 8px 12px;
       background: ${type === 'success' ? '#10b981' : type === 'warning' ? '#f59e0b' : '#3b82f6'};
-      color: white;
-      border-radius: 4px;
-      font-size: 12px;
-      font-weight: 500;
-      z-index: 1000;
-      opacity: 0;
-      transition: opacity 0.3s;
-      pointer-events: none;
+      color: white; border-radius: 4px; font-size: 12px; font-weight: 500;
+      z-index: 1000; opacity: 0; transition: opacity 0.3s; pointer-events: none;
     `;
     notification.textContent = message;
-    
     document.body.appendChild(notification);
-    
     setTimeout(() => notification.style.opacity = '1', 100);
-    
     setTimeout(() => {
       notification.style.opacity = '0';
       setTimeout(() => notification.remove(), 300);
     }, 2000);
   }
 
-  private initializeProseMirror(initialContent: string) {
+  private async initializeProseMirror(initialContent: string) {
     if (!this.ydoc) {
       console.error('Y.Doc not available for ProseMirror initialization');
       return;
@@ -172,19 +155,26 @@ export class CollaborativeEditor {
       this.editorView = null;
     }
 
-    const type = this.ydoc.getXmlFragment('prosemirror');
+    // Get Y.js XML fragment
+    this.yXmlFragment = this.ydoc.getXmlFragment('prosemirror');
 
-    // Handle initial content for new documents (not rooms)
-    if (!this.isLiveRoom && type.length === 0 && initialContent.trim()) {
-      const lines = initialContent.split('\n');
+    // Only set initial content if document is empty
+    const isEmpty = this.yXmlFragment.length === 0;
+    
+    if (isEmpty && !this.isLiveRoom && initialContent.trim()) {
+      console.log('📝 Setting initial content for new document');
+      
       const tempDiv = document.createElement('div');
+      const lines = initialContent.split('\n').filter(line => line.trim());
+      
+      if (lines.length === 0) {
+        lines.push('');
+      }
       
       lines.forEach(line => {
-        if (line.trim()) {
-          const p = document.createElement('p');
-          p.textContent = line;
-          tempDiv.appendChild(p);
-        }
+        const p = document.createElement('p');
+        p.textContent = line.trim() || ' ';
+        tempDiv.appendChild(p);
       });
       
       const parser = DOMParser.fromSchema(mySchema);
@@ -195,13 +185,16 @@ export class CollaborativeEditor {
         nodes.push(doc.content.child(i));
       }
       
-      type.insertAfter(null, nodes);
+      if (nodes.length > 0) {
+        this.yXmlFragment.insertAfter(null, nodes);
+      }
     }
 
+    // Create ProseMirror state with cursor debugging
     const state = EditorState.create({
       schema: mySchema,
       plugins: [
-        ySyncPlugin(type),
+        ySyncPlugin(this.yXmlFragment),
         yCursorPlugin(this.provider!.awareness),
         yUndoPlugin(),
         keymap({
@@ -221,25 +214,130 @@ export class CollaborativeEditor {
       ]
     });
 
-    // Create the editor view with proper transaction handling
+    // 🔍 DEBUGGING: Create EditorView with transaction logging
     this.editorView = new EditorView(editorEl, {
       state,
       dispatchTransaction: (transaction) => {
-        if (!this.editorView) {
-          console.warn('EditorView not ready yet');
-          return;
-        }
+        if (!this.editorView) return;
         
+        // 📊 LOG CURSOR POSITIONS BEFORE TRANSACTION
+        const beforeSelection = this.editorView.state.selection;
+        const beforeFrom = beforeSelection.from;
+        const beforeTo = beforeSelection.to;
+        const beforeAnchor = beforeSelection.anchor;
+        const beforeHead = beforeSelection.head;
+        
+        console.log('🔍 BEFORE TRANSACTION:', {
+          from: beforeFrom,
+          to: beforeTo,
+          anchor: beforeAnchor,
+          head: beforeHead,
+          empty: beforeSelection.empty,
+          docChanged: transaction.docChanged,
+          selectionSet: transaction.selectionSet,
+          transactionSteps: transaction.steps.length
+        });
+        
+        // Apply the transaction
         const newState = this.editorView.state.apply(transaction);
         this.editorView.updateState(newState);
         
+        // 📊 LOG CURSOR POSITIONS AFTER TRANSACTION
+        const afterSelection = this.editorView.state.selection;
+        const afterFrom = afterSelection.from;
+        const afterTo = afterSelection.to;
+        const afterAnchor = afterSelection.anchor;
+        const afterHead = afterSelection.head;
+        
+        console.log('🔍 AFTER TRANSACTION:', {
+          from: afterFrom,
+          to: afterTo,
+          anchor: afterAnchor,
+          head: afterHead,
+          empty: afterSelection.empty,
+          documentLength: this.editorView.state.doc.content.size
+        });
+        
+        // 🚨 CURSOR POSITION CHANGE DETECTION
+        if (beforeFrom !== afterFrom || beforeTo !== afterTo) {
+          console.log('🎯 CURSOR MOVED:', {
+            fromChange: `${beforeFrom} → ${afterFrom}`,
+            toChange: `${beforeTo} → ${afterTo}`,
+            anchorChange: `${beforeAnchor} → ${afterAnchor}`,
+            headChange: `${beforeHead} → ${afterHead}`
+          });
+          
+          // 🚨 DETECT CURSOR JUMPING TO POSITION 0
+          if (afterFrom === 0 && beforeFrom > 0) {
+            console.error('🚨 CURSOR JUMPED TO POSITION 0!', {
+              previousPosition: beforeFrom,
+              transactionMeta: transaction.meta,
+              transactionTime: transaction.time,
+              isYjsTransaction: transaction.getMeta('y-sync$') !== undefined,
+              docChanges: transaction.changes.toString()
+            });
+          }
+        }
+        
+        // 📝 LOG DOCUMENT CHANGES
         if (transaction.docChanged) {
+          console.log('📝 DOCUMENT CHANGED:', {
+            contentLength: this.editorView.state.doc.content.size,
+            textContent: this.editorView.state.doc.textContent.substring(0, 50) + '...',
+            changeCount: transaction.changes.size
+          });
+          
           this.scheduleAutoSave();
+        }
+        
+        // 🔄 LOG Y.js SYNC TRANSACTIONS
+        if (transaction.getMeta('y-sync$')) {
+          console.log('🔄 Y.js SYNC TRANSACTION detected:', {
+            origin: transaction.getMeta('y-sync$'),
+            beforeCursor: beforeFrom,
+            afterCursor: afterFrom,
+            cursorChanged: beforeFrom !== afterFrom
+          });
         }
       }
     });
 
+    // Set up auto-save listener on Y.js document changes
+    this.yXmlFragment.observe((event) => {
+      console.log('🔄 Y.js FRAGMENT CHANGED:', {
+        eventType: event.constructor.name,
+        fragmentLength: this.yXmlFragment!.length,
+        currentCursor: this.editorView?.state.selection.from || 'no-cursor'
+      });
+      this.scheduleAutoSave();
+    });
+
     this.addCollaborativeCursorStyles();
+    
+    // Focus after a brief delay with cursor logging
+    setTimeout(() => {
+      if (this.editorView) {
+        console.log('🎯 FOCUSING EDITOR...');
+        this.editorView.focus();
+        
+        const { doc } = this.editorView.state;
+        const endPos = doc.content.size;
+        
+        console.log('🎯 MOVING CURSOR TO END:', {
+          documentSize: doc.content.size,
+          targetPosition: endPos,
+          currentPosition: this.editorView.state.selection.from
+        });
+        
+        const tr = this.editorView.state.tr.setSelection(
+          this.editorView.state.selection.constructor.atEnd(doc)
+        );
+        this.editorView.dispatch(tr);
+        
+        console.log('🎯 CURSOR POSITIONED AT:', this.editorView.state.selection.from);
+      }
+    }, 200);
+
     console.log(`✅ ProseMirror editor initialized for ${this.isLiveRoom ? 'room' : 'document'}`);
   }
 
@@ -257,6 +355,8 @@ export class CollaborativeEditor {
         font-size: 16px;
         line-height: 1.7;
         color: #374151;
+        min-height: 200px;
+        cursor: text;
       }
       
       .ProseMirror h1, .ProseMirror h2, .ProseMirror h3 {
@@ -308,6 +408,7 @@ export class CollaborativeEditor {
         color: inherit;
       }
       
+      /* Y.js collaborative cursors */
       .ProseMirror .yjs-cursor {
         position: relative;
         margin-left: -1px;
@@ -316,12 +417,22 @@ export class CollaborativeEditor {
         border-color: var(--cursor-color);
         word-break: normal;
         pointer-events: none;
-        animation: cursorPulse 2s infinite;
       }
       
-      @keyframes cursorPulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.7; }
+      .ProseMirror .yjs-cursor::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -1px;
+        width: 2px;
+        height: 1.2em;
+        background: var(--cursor-color);
+        animation: cursorBlink 1s infinite;
+      }
+      
+      @keyframes cursorBlink {
+        0%, 50% { opacity: 1; }
+        51%, 100% { opacity: 0; }
       }
       
       .ProseMirror .yjs-cursor > .yjs-cursor-caret {
@@ -348,16 +459,40 @@ export class CollaborativeEditor {
         opacity: 0;
         transition: opacity 0.3s;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        z-index: 1000;
       }
       
-      .ProseMirror .yjs-cursor:hover > .yjs-cursor-caret > .yjs-cursor-info,
-      .ProseMirror .yjs-cursor.yjs-cursor-active > .yjs-cursor-caret > .yjs-cursor-info {
+      .ProseMirror .yjs-cursor:hover > .yjs-cursor-caret > .yjs-cursor-info {
         opacity: 1;
       }
       
       .ProseMirror .yjs-selection {
-        background: var(--selection-color);
+        background-color: var(--selection-color, rgba(59, 130, 246, 0.2));
         border-radius: 2px;
+      }
+      
+      /* Menu bar */
+      .ProseMirror-menubar {
+        border-bottom: 1px solid #e5e7eb;
+        padding: 8px;
+        background: #f8fafc;
+        border-radius: 8px 8px 0 0;
+      }
+      
+      .ProseMirror-menubar .ProseMirror-menu {
+        margin: 0;
+      }
+      
+      .ProseMirror-menubar .ProseMirror-menuitem {
+        margin-right: 4px;
+      }
+      
+      .ProseMirror:focus {
+        outline: none;
+      }
+      
+      .ProseMirror ::selection {
+        background: rgba(59, 130, 246, 0.2);
       }
     `;
     document.head.appendChild(style);
@@ -492,8 +627,8 @@ export class CollaborativeEditor {
     
     collaboratorsEl.innerHTML = peers.slice(0, displayLimit).map(user => `
       <div class="collaborator-avatar" 
-           style="background-color: ${user.color}; color: white; font-size: 10px; display: flex; align-items: center; justify-content: center; font-weight: 500; ${this.isLiveRoom ? 'border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.1);' : ''}"
-           title="${user.name} (${user.email})${this.isLiveRoom ? ' - In Room' : ''}">
+           style="background-color: ${user.color}; color: white; font-size: 10px; display: flex; align-items: center; justify-content: center; font-weight: 500; width: 24px; height: 24px; border-radius: 50%; margin-left: -4px; border: 2px solid white;"
+           title="${user.name} (${user.email})">
         ${user.picture ? 
           `<img src="${user.picture}" alt="" style="width: 100%; height: 100%; border-radius: 50%;">` : 
           user.name.charAt(0).toUpperCase()
@@ -504,8 +639,8 @@ export class CollaborativeEditor {
     if (peers.length > displayLimit) {
       collaboratorsEl.innerHTML += `
         <div class="collaborator-avatar" 
-             style="background-color: #6b7280; color: white; font-size: 10px; display: flex; align-items: center; justify-content: center; font-weight: 500; ${this.isLiveRoom ? 'border: 2px solid white;' : ''}"
-             title="${peers.length - displayLimit} more ${this.isLiveRoom ? 'in room' : 'collaborators'}">
+             style="background-color: #6b7280; color: white; font-size: 10px; display: flex; align-items: center; justify-content: center; font-weight: 500; width: 24px; height: 24px; border-radius: 50%; margin-left: -4px; border: 2px solid white;"
+             title="${peers.length - displayLimit} more">
           +${peers.length - displayLimit}
         </div>
       `;
@@ -523,9 +658,10 @@ export class CollaborativeEditor {
     const doc = this.editorView.state.doc;
     let content = '';
     
-    doc.descendants((node, pos) => {
+    doc.descendants((node) => {
       if (node.type.name === 'paragraph') {
-        content += node.textContent + '\n\n';
+        const text = node.textContent.trim();
+        content += text + '\n\n';
       } else if (node.type.name === 'heading') {
         const level = '#'.repeat(node.attrs.level);
         content += level + ' ' + node.textContent + '\n\n';
@@ -533,6 +669,18 @@ export class CollaborativeEditor {
         content += '```\n' + node.textContent + '\n```\n\n';
       } else if (node.type.name === 'blockquote') {
         content += '> ' + node.textContent + '\n\n';
+      } else if (node.type.name === 'bullet_list') {
+        node.forEach(listItem => {
+          content += '- ' + listItem.textContent + '\n';
+        });
+        content += '\n';
+      } else if (node.type.name === 'ordered_list') {
+        let counter = 1;
+        node.forEach(listItem => {
+          content += `${counter}. ` + listItem.textContent + '\n';
+          counter++;
+        });
+        content += '\n';
       }
     });
     
@@ -609,7 +757,6 @@ export class CollaborativeEditor {
       this.autoSaveTimeout = null;
     }
 
-    // Properly destroy provider
     if (this.provider) {
       try {
         this.provider.destroy();
@@ -619,7 +766,6 @@ export class CollaborativeEditor {
       this.provider = null;
     }
 
-    // Properly destroy persistence
     if (this.persistence) {
       try {
         this.persistence.destroy();
@@ -629,7 +775,6 @@ export class CollaborativeEditor {
       this.persistence = null;
     }
 
-    // Properly destroy editor
     if (this.editorView) {
       try {
         this.editorView.destroy();
@@ -639,7 +784,8 @@ export class CollaborativeEditor {
       this.editorView = null;
     }
 
-    // Destroy Y.Doc
+    this.yXmlFragment = null;
+
     if (this.ydoc) {
       try {
         this.ydoc.destroy();
