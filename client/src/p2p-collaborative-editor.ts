@@ -20,6 +20,18 @@ export interface P2PDocument {
   isShared: boolean;
 }
 
+// Type safety for signaling messages
+interface PeerInfo {
+  peerId: string;
+  peerInfo: User & { roomId: string; color: string };
+}
+
+type SignalingMessage =
+  | { type: 'existing_peers'; peers: PeerInfo[] }
+  | { type: 'peer_joined'; peerId: string; peerInfo: PeerInfo['peerInfo'] }
+  | { type: 'peer_left'; peerId: string }
+  | { type: 'peer_heartbeat'; peerId: string };
+
 export class P2PDocumentManager {
   private db: IDBDatabase | null = null;
   private static instance: P2PDocumentManager;
@@ -278,6 +290,16 @@ export class P2PDocumentManager {
   generateShareLink(shareCode: string): string {
     return `${window.location.origin}?share=${shareCode}`;
   }
+
+  async shareDocument(documentId: string): Promise<string | null> {
+    const doc = await this.getDocument(documentId);
+    if (doc) {
+      doc.isShared = true;
+      await this.saveDocument(doc);
+      return doc.shareCode;
+    }
+    return null;
+  }
 }
 
 export class P2PCollaborativeEditor {
@@ -287,11 +309,17 @@ export class P2PCollaborativeEditor {
   private textArea: HTMLTextAreaElement | null = null;
   private currentDocument: P2PDocument | null = null;
   private user: User | null = null;
-  private collaborators: Map<string, any> = new Map();
+  private collaborators: Map<string, PeerInfo['peerInfo']> = new Map();
   private signalingWs: WebSocket | null = null;
   private peerId: string;
   private isConnected: boolean = false;
   private documentManager: P2PDocumentManager;
+  private reconnectDelay = 1000; // Exponential backoff for reconnection
+  private reconnectTimeout: number | null = null;
+  private heartbeatInterval: number | null = null;
+  
+  // Debounced word count function
+  private debouncedWordCount = this.debounce(() => this.updateWordCount(), 200);
 
   constructor() {
     this.peerId = crypto.randomUUID();
@@ -301,6 +329,9 @@ export class P2PCollaborativeEditor {
   async initialize(documentId: string, user: User): Promise<void> {
     console.log('🔄 Initializing P2P editor for:', documentId);
     this.user = user;
+
+    // Clean up any existing connections first
+    this.cleanup();
 
     // Get or create document
     let document = await this.documentManager.getDocument(documentId);
@@ -333,7 +364,6 @@ export class P2PCollaborativeEditor {
 
     // Setup WebRTC provider
     this.webrtcProvider = new WebrtcProvider(roomId, this.ydoc, {
-    
       signaling: ['ws://localhost:4444'],  // npx y-webrtc --port 3003
       password: `p2p-${roomId}`,
       maxConns: 20,
@@ -420,268 +450,277 @@ export class P2PCollaborativeEditor {
     }
   }
 
-// 🔧 FIXED setupCollaborativeText method - replace in your P2PCollaborativeEditor
+  // 🔧 FIXED setupCollaborativeText method - keeps all original functionality
+  private setupCollaborativeText(): void {
+    if (!this.ydoc || !this.textArea) return;
 
-private setupCollaborativeText(): void {
-  if (!this.ydoc || !this.textArea) return;
+    const ytext = this.ydoc.getText('content');
+    console.log('📝 Setting up collaborative text, initial content length:', ytext.length);
 
-  const ytext = this.ydoc.getText('content');
-  console.log('📝 Setting up collaborative text, initial content length:', ytext.length);
+    // Initialize textarea with Y.js content
+    this.textArea.value = ytext.toString();
+    this.updateWordCount();
 
-  // Initialize textarea with Y.js content
-  this.textArea.value = ytext.toString();
-  this.updateWordCount();
-
-  // 🔍 Y.js CHANGE OBSERVER (handles remote changes)
-  ytext.observe(event => {
-    console.log('🔄 Y.js text changed:', {
-      deltaLength: event.changes.delta.length,
-      yTextLength: ytext.length,
-      textAreaLength: this.textArea!.value.length,
-      cursorPosition: this.textArea!.selectionStart,
-      cursorEnd: this.textArea!.selectionEnd
-    });
+    // 🔍 Y.js CHANGE OBSERVER (handles remote changes)
+    let lastKnownContent = ytext.toString(); // Move this here to share between observer and input handler
     
-    const currentContent = this.textArea!.value;
-    const newContent = ytext.toString();
-    
-    if (currentContent !== newContent) {
-      console.log('📝 Content mismatch - updating textarea:', {
-        currentLength: currentContent.length,
-        newLength: newContent.length,
-        beforeCursor: this.textArea!.selectionStart,
-        beforeEnd: this.textArea!.selectionEnd
+    ytext.observe(event => {
+      console.log('🔄 Y.js text changed:', {
+        deltaLength: event.changes.delta.length,
+        yTextLength: ytext.length,
+        textAreaLength: this.textArea!.value.length,
+        cursorPosition: this.textArea!.selectionStart,
+        cursorEnd: this.textArea!.selectionEnd
       });
       
-      // 🔍 CURSOR POSITION DEBUGGING BEFORE UPDATE
-      const beforeCursorPos = this.textArea!.selectionStart;
-      const beforeCursorEnd = this.textArea!.selectionEnd;
+      const currentContent = this.textArea!.value;
+      const newContent = ytext.toString();
       
-      this.textArea!.value = newContent;
+      if (currentContent !== newContent) {
+        console.log('📝 Content mismatch - updating textarea:', {
+          currentLength: currentContent.length,
+          newLength: newContent.length,
+          beforeCursor: this.textArea!.selectionStart,
+          beforeEnd: this.textArea!.selectionEnd
+        });
+        
+        // 🔍 CURSOR POSITION DEBUGGING BEFORE UPDATE
+        const beforeCursorPos = this.textArea!.selectionStart;
+        const beforeCursorEnd = this.textArea!.selectionEnd;
+        
+        this.textArea!.value = newContent;
+        
+        // 🔑 SMART CURSOR RESTORATION
+        // If new content is longer, try to preserve cursor position
+        // If new content is shorter, move cursor to end of new content
+        let safeCursorPos = beforeCursorPos;
+        let safeCursorEnd = beforeCursorEnd;
+        
+        if (newContent.length < currentContent.length) {
+          // Content was deleted - move cursor to end of remaining content
+          safeCursorPos = Math.min(beforeCursorPos, newContent.length);
+          safeCursorEnd = Math.min(beforeCursorEnd, newContent.length);
+        } else {
+          // Content was added - try to maintain relative position
+          safeCursorPos = Math.min(beforeCursorPos, newContent.length);
+          safeCursorEnd = Math.min(beforeCursorEnd, newContent.length);
+        }
+        
+        console.log('🎯 Cursor position restoration:', {
+          savedPosition: beforeCursorPos,
+          restoringTo: safeCursorPos,
+          textLength: newContent.length,
+          validPosition: safeCursorPos <= newContent.length
+        });
+        
+        this.textArea!.setSelectionRange(safeCursorPos, safeCursorEnd);
+        
+        // 🔍 LOG ACTUAL CURSOR POSITION AFTER RESTORATION
+        console.log('🎯 Cursor after restoration:', {
+          actualStart: this.textArea!.selectionStart,
+          actualEnd: this.textArea!.selectionEnd,
+          expectedStart: safeCursorPos,
+          expectedEnd: safeCursorEnd,
+          cursorMoved: this.textArea!.selectionStart !== safeCursorPos
+        });
+        
+        // Update our known content after remote changes
+        lastKnownContent = newContent;
+        
+        this.updateWordCount();
+        this.updateSyncStatus('synced');
+      }
+    });
+
+    // 🔧 FIXED TEXTAREA INPUT HANDLER (incremental updates)
+    let isUpdating = false;
+    
+    this.textArea.addEventListener('input', (e) => {
+      if (isUpdating) return;
       
-      // 🔑 SMART CURSOR RESTORATION
-      // If new content is longer, try to preserve cursor position
-      // If new content is shorter, move cursor to end of new content
-      let safeCursorPos = beforeCursorPos;
-      let safeCursorEnd = beforeCursorEnd;
+      const inputEvent = e as InputEvent;
+      const newContent = this.textArea!.value;
+      const cursorPos = this.textArea!.selectionStart;
       
-      if (newContent.length < currentContent.length) {
-        // Content was deleted - move cursor to end of remaining content
-        safeCursorPos = Math.min(beforeCursorPos, newContent.length);
-        safeCursorEnd = Math.min(beforeCursorEnd, newContent.length);
+      // 🔍 LOG INPUT EVENT DETAILS
+      console.log('⌨️ Textarea input event:', {
+        inputType: inputEvent.inputType,
+        data: inputEvent.data,
+        cursorStart: this.textArea!.selectionStart,
+        cursorEnd: this.textArea!.selectionEnd,
+        contentLength: newContent.length,
+        yTextLength: ytext.length,
+        contentMatch: newContent === ytext.toString()
+      });
+      
+      if (newContent !== lastKnownContent) {
+        console.log('⌨️ Content changed - applying incremental update:', {
+          oldLength: lastKnownContent.length,
+          newLength: newContent.length,
+          cursorPosition: cursorPos,
+          inputType: inputEvent.inputType
+        });
+        
+        isUpdating = true;
+        this.updateSyncStatus('syncing');
+        
+        // 🔑 KEY FIX: Use incremental Y.js updates instead of full replace
+        this.applyIncrementalUpdate(ytext, lastKnownContent, newContent, inputEvent);
+        
+        // Update our known content
+        lastKnownContent = newContent;
+        
+        setTimeout(() => {
+          this.updateSyncStatus('synced');
+          isUpdating = false;
+          
+          console.log('✅ Y.js incremental update complete:', {
+            finalCursor: this.textArea!.selectionStart,
+            yTextLength: ytext.length,
+            textAreaLength: this.textArea!.value.length,
+            contentMatch: ytext.toString() === this.textArea!.value
+          });
+        }, 100); // Shorter timeout
+      }
+    });
+
+    // 🔍 LOG SELECTION CHANGES
+    this.textArea.addEventListener('selectionchange', () => {
+      console.log('👆 Selection changed:', {
+        start: this.textArea!.selectionStart,
+        end: this.textArea!.selectionEnd,
+        direction: this.textArea!.selectionDirection,
+        contentLength: this.textArea!.value.length
+      });
+    });
+
+    // 🔍 LOG FOCUS EVENTS
+    this.textArea.addEventListener('focus', () => {
+      console.log('🎯 Textarea focused, cursor at:', this.textArea!.selectionStart);
+    });
+
+    this.textArea.addEventListener('blur', () => {
+      console.log('🎯 Textarea blurred, cursor was at:', this.textArea!.selectionStart);
+    });
+
+    console.log('✅ Collaborative text setup complete with incremental updates');
+  }
+
+  // 🔑 INCREMENTAL Y.js updates - keeps all original logic
+  private applyIncrementalUpdate(ytext: Y.Text, oldContent: string, newContent: string, inputEvent: InputEvent): void {
+    // Calculate the difference between old and new content
+    const oldLen = oldContent.length;
+    const newLen = newContent.length;
+    
+    console.log('🔧 Applying incremental update:', {
+      inputType: inputEvent.inputType,
+      oldLength: oldLen,
+      newLength: newLen,
+      lengthDiff: newLen - oldLen
+    });
+
+    if (inputEvent.inputType === 'insertText' || inputEvent.inputType === 'insertCompositionText') {
+      // Handle text insertion
+      const cursorPos = this.textArea!.selectionStart;
+      const insertPos = cursorPos - (inputEvent.data?.length || 1);
+      const insertedText = inputEvent.data || '';
+      
+      console.log('📝 Inserting text:', {
+        text: insertedText,
+        position: insertPos,
+        cursorAfter: cursorPos
+      });
+      
+      if (insertPos >= 0 && insertPos <= ytext.length) {
+        ytext.insert(insertPos, insertedText);
       } else {
-        // Content was added - try to maintain relative position
-        safeCursorPos = Math.min(beforeCursorPos, newContent.length);
-        safeCursorEnd = Math.min(beforeCursorEnd, newContent.length);
+        // Fallback to simple append
+        ytext.insert(ytext.length, insertedText);
       }
       
-      console.log('🎯 Cursor position restoration:', {
-        savedPosition: beforeCursorPos,
-        restoringTo: safeCursorPos,
-        textLength: newContent.length,
-        validPosition: safeCursorPos <= newContent.length
+    } else if (inputEvent.inputType === 'deleteContentBackward') {
+      // Handle backspace
+      const cursorPos = this.textArea!.selectionStart;
+      const deletePos = cursorPos;
+      const deleteCount = oldLen - newLen;
+      
+      console.log('🗑️ Deleting text (backspace):', {
+        position: deletePos,
+        count: deleteCount,
+        cursorAfter: cursorPos
       });
       
-      this.textArea!.setSelectionRange(safeCursorPos, safeCursorEnd);
+      if (deletePos >= 0 && deletePos < ytext.length && deleteCount > 0) {
+        ytext.delete(deletePos, deleteCount);
+      }
       
-      // 🔍 LOG ACTUAL CURSOR POSITION AFTER RESTORATION
-      console.log('🎯 Cursor after restoration:', {
-        actualStart: this.textArea!.selectionStart,
-        actualEnd: this.textArea!.selectionEnd,
-        expectedStart: safeCursorPos,
-        expectedEnd: safeCursorEnd,
-        cursorMoved: this.textArea!.selectionStart !== safeCursorPos
+    } else if (inputEvent.inputType === 'deleteContentForward') {
+      // Handle delete key
+      const cursorPos = this.textArea!.selectionStart;
+      const deleteCount = oldLen - newLen;
+      
+      console.log('🗑️ Deleting text (delete key):', {
+        position: cursorPos,
+        count: deleteCount,
+        cursorAfter: cursorPos
       });
       
-      this.updateWordCount();
-      this.updateSyncStatus('synced');
-    }
-  });
-
-  // 🔧 FIXED TEXTAREA INPUT HANDLER (incremental updates)
-  let isUpdating = false;
-  let lastKnownContent = ytext.toString();
-  
-  this.textArea.addEventListener('input', (e) => {
-    if (isUpdating) return;
-    
-    const inputEvent = e as InputEvent;
-    const newContent = this.textArea!.value;
-    const cursorPos = this.textArea!.selectionStart;
-    
-    // 🔍 LOG INPUT EVENT DETAILS
-    console.log('⌨️ Textarea input event:', {
-      inputType: inputEvent.inputType,
-      data: inputEvent.data,
-      cursorStart: this.textArea!.selectionStart,
-      cursorEnd: this.textArea!.selectionEnd,
-      contentLength: newContent.length,
-      yTextLength: ytext.length,
-      contentMatch: newContent === ytext.toString()
-    });
-    
-    if (newContent !== lastKnownContent) {
-      console.log('⌨️ Content changed - applying incremental update:', {
-        oldLength: lastKnownContent.length,
-        newLength: newContent.length,
-        cursorPosition: cursorPos,
-        inputType: inputEvent.inputType
-      });
+      if (cursorPos >= 0 && cursorPos < ytext.length && deleteCount > 0) {
+        ytext.delete(cursorPos, deleteCount);
+      }
       
-      isUpdating = true;
-      this.updateSyncStatus('syncing');
-      
-      // 🔑 KEY FIX: Use incremental Y.js updates instead of full replace
-      this.applyIncrementalUpdate(ytext, lastKnownContent, newContent, inputEvent);
-      
-      // Update our known content
-      lastKnownContent = newContent;
-      
-      setTimeout(() => {
-        this.updateSyncStatus('synced');
-        isUpdating = false;
-        
-        console.log('✅ Y.js incremental update complete:', {
-          finalCursor: this.textArea!.selectionStart,
-          yTextLength: ytext.length,
-          textAreaLength: this.textArea!.value.length,
-          contentMatch: ytext.toString() === this.textArea!.value
-        });
-      }, 100); // Shorter timeout
-    }
-  });
-
-  // 🔍 LOG SELECTION CHANGES
-  this.textArea.addEventListener('selectionchange', () => {
-    console.log('👆 Selection changed:', {
-      start: this.textArea!.selectionStart,
-      end: this.textArea!.selectionEnd,
-      direction: this.textArea!.selectionDirection,
-      contentLength: this.textArea!.value.length
-    });
-  });
-
-  // 🔍 LOG FOCUS EVENTS
-  this.textArea.addEventListener('focus', () => {
-    console.log('🎯 Textarea focused, cursor at:', this.textArea!.selectionStart);
-  });
-
-  this.textArea.addEventListener('blur', () => {
-    console.log('🎯 Textarea blurred, cursor was at:', this.textArea!.selectionStart);
-  });
-
-  console.log('✅ Collaborative text setup complete with incremental updates');
-}
-
-// 🔑 NEW METHOD: Incremental Y.js updates
-private applyIncrementalUpdate(ytext: Y.Text, oldContent: string, newContent: string, inputEvent: InputEvent): void {
-  // Calculate the difference between old and new content
-  const oldLen = oldContent.length;
-  const newLen = newContent.length;
-  
-  console.log('🔧 Applying incremental update:', {
-    inputType: inputEvent.inputType,
-    oldLength: oldLen,
-    newLength: newLen,
-    lengthDiff: newLen - oldLen
-  });
-
-  if (inputEvent.inputType === 'insertText' || inputEvent.inputType === 'insertCompositionText') {
-    // Handle text insertion
-    const cursorPos = this.textArea!.selectionStart;
-    const insertPos = cursorPos - (inputEvent.data?.length || 1);
-    const insertedText = inputEvent.data || '';
-    
-    console.log('📝 Inserting text:', {
-      text: insertedText,
-      position: insertPos,
-      cursorAfter: cursorPos
-    });
-    
-    if (insertPos >= 0 && insertPos <= ytext.length) {
-      ytext.insert(insertPos, insertedText);
     } else {
-      // Fallback to simple append
-      ytext.insert(ytext.length, insertedText);
+      // Fallback for other input types - use minimal diff
+      console.log('🔄 Fallback: calculating minimal diff for input type:', inputEvent.inputType);
+      this.applyMinimalDiff(ytext, oldContent, newContent);
     }
-    
-  } else if (inputEvent.inputType === 'deleteContentBackward') {
-    // Handle backspace
-    const cursorPos = this.textArea!.selectionStart;
-    const deletePos = cursorPos;
-    const deleteCount = oldLen - newLen;
-    
-    console.log('🗑️ Deleting text (backspace):', {
-      position: deletePos,
-      count: deleteCount,
-      cursorAfter: cursorPos
-    });
-    
-    if (deletePos >= 0 && deletePos < ytext.length && deleteCount > 0) {
-      ytext.delete(deletePos, deleteCount);
-    }
-    
-  } else if (inputEvent.inputType === 'deleteContentForward') {
-    // Handle delete key
-    const cursorPos = this.textArea!.selectionStart;
-    const deleteCount = oldLen - newLen;
-    
-    console.log('🗑️ Deleting text (delete key):', {
-      position: cursorPos,
-      count: deleteCount,
-      cursorAfter: cursorPos
-    });
-    
-    if (cursorPos >= 0 && cursorPos < ytext.length && deleteCount > 0) {
-      ytext.delete(cursorPos, deleteCount);
-    }
-    
-  } else {
-    // Fallback for other input types - use minimal diff
-    console.log('🔄 Fallback: calculating minimal diff for input type:', inputEvent.inputType);
-    this.applyMinimalDiff(ytext, oldContent, newContent);
   }
-}
 
-// Helper method for complex changes
-private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string): void {
-  // Find the common prefix and suffix
-  let prefixLen = 0;
-  while (prefixLen < Math.min(oldContent.length, newContent.length) && 
-         oldContent[prefixLen] === newContent[prefixLen]) {
-    prefixLen++;
+  // Helper method for complex changes - keeps original logic
+  private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string): void {
+    // Find the common prefix and suffix
+    let prefixLen = 0;
+    while (prefixLen < Math.min(oldContent.length, newContent.length) && 
+           oldContent[prefixLen] === newContent[prefixLen]) {
+      prefixLen++;
+    }
+    
+    let suffixLen = 0;
+    while (suffixLen < Math.min(oldContent.length - prefixLen, newContent.length - prefixLen) &&
+           oldContent[oldContent.length - 1 - suffixLen] === newContent[newContent.length - 1 - suffixLen]) {
+      suffixLen++;
+    }
+    
+    // Calculate what changed in the middle
+    const deleteStart = prefixLen;
+    const deleteCount = oldContent.length - prefixLen - suffixLen;
+    const insertText = newContent.substring(prefixLen, newContent.length - suffixLen);
+    
+    console.log('🔧 Minimal diff calculated:', {
+      prefixLen,
+      suffixLen,
+      deleteStart,
+      deleteCount,
+      insertText: insertText.substring(0, 20) + (insertText.length > 20 ? '...' : ''),
+      insertLength: insertText.length
+    });
+    
+    // Apply the minimal changes
+    if (deleteCount > 0) {
+      ytext.delete(deleteStart, deleteCount);
+    }
+    if (insertText.length > 0) {
+      ytext.insert(deleteStart, insertText);
+    }
   }
-  
-  let suffixLen = 0;
-  while (suffixLen < Math.min(oldContent.length - prefixLen, newContent.length - prefixLen) &&
-         oldContent[oldContent.length - 1 - suffixLen] === newContent[newContent.length - 1 - suffixLen]) {
-    suffixLen++;
-  }
-  
-  // Calculate what changed in the middle
-  const deleteStart = prefixLen;
-  const deleteCount = oldContent.length - prefixLen - suffixLen;
-  const insertText = newContent.substring(prefixLen, newContent.length - suffixLen);
-  
-  console.log('🔧 Minimal diff calculated:', {
-    prefixLen,
-    suffixLen,
-    deleteStart,
-    deleteCount,
-    insertText: insertText.substring(0, 20) + (insertText.length > 20 ? '...' : ''),
-    insertLength: insertText.length
-  });
-  
-  // Apply the minimal changes
-  if (deleteCount > 0) {
-    ytext.delete(deleteStart, deleteCount);
-  }
-  if (insertText.length > 0) {
-    ytext.insert(deleteStart, insertText);
-  }
-}
 
   private connectToSignalingServer(roomId: string): void {
+    // Clear any existing reconnect timeout
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+
     const wsUrl = 'ws://localhost:3003/signal';
     console.log('📡 Connecting to signaling server:', wsUrl);
 
@@ -690,6 +729,7 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
     this.signalingWs.onopen = () => {
       console.log('📡 Connected to signaling server');
       this.isConnected = true;
+      this.reconnectDelay = 1000; // Reset reconnect delay on successful connection
       this.updateP2PStatus('Connected to peers');
 
       // Join document room using SHARE CODE
@@ -702,12 +742,17 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
           name: this.user!.name,
           email: this.user!.email,
           picture: this.user!.picture,
+          color: this.getUserColor(this.user!.id),
           roomId: roomId
         }
       }));
 
-      // Send heartbeat every 30 seconds
-      setInterval(() => {
+      // Send heartbeat every 30 seconds with better cleanup
+      if (this.heartbeatInterval) {
+        clearInterval(this.heartbeatInterval);
+      }
+      
+      this.heartbeatInterval = window.setInterval(() => {
         if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {
           this.signalingWs.send(JSON.stringify({
             type: 'peer_heartbeat',
@@ -719,7 +764,7 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
 
     this.signalingWs.onmessage = (event) => {
       try {
-        const message = JSON.parse(event.data);
+        const message = JSON.parse(event.data) as SignalingMessage;
         this.handleSignalingMessage(message);
       } catch (error) {
         console.error('Error parsing signaling message:', error);
@@ -731,12 +776,21 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
       this.isConnected = false;
       this.updateP2PStatus('Disconnected - Working offline');
       
-      // Attempt reconnection after 3 seconds
-      setTimeout(() => {
+      // Clear heartbeat interval
+      if (this.heartbeatInterval) {
+        clearInterval(this.heartbeatInterval);
+        this.heartbeatInterval = null;
+      }
+      
+      // Attempt reconnection with exponential backoff
+      this.reconnectTimeout = window.setTimeout(() => {
         if (!this.isConnected) {
           this.connectToSignalingServer(roomId);
         }
-      }, 3000);
+      }, this.reconnectDelay);
+      
+      // Increase delay for next reconnect (max 30 seconds)
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
     };
 
     this.signalingWs.onerror = (error) => {
@@ -745,7 +799,7 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
     };
   }
 
-  private handleSignalingMessage(message: any): void {
+  private handleSignalingMessage(message: SignalingMessage): void {
     console.log('📨 Received signaling message:', message.type, message);
     
     switch (message.type) {
@@ -753,7 +807,7 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
         console.log('👥 Found existing peers:', message.peers.length);
         
         // Update collaborators with existing peers
-        message.peers.forEach((peer: any) => {
+        message.peers.forEach((peer) => {
           this.collaborators.set(peer.peerId, peer.peerInfo);
         });
         
@@ -843,10 +897,8 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
     document.getElementById('h1-btn')?.addEventListener('click', () => this.insertText('# '));
     document.getElementById('h2-btn')?.addEventListener('click', () => this.insertText('## '));
 
-    // Setup text change handlers
-    this.textArea?.addEventListener('input', () => {
-      this.updateWordCount();
-    });
+    // Setup text change handlers with debounced word count
+    this.textArea?.addEventListener('input', this.debouncedWordCount);
   }
 
   private renderCollaborators(): void {
@@ -895,7 +947,7 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
     }
   }
 
-  // 🔍 ENHANCED FORMAT TEXT WITH CURSOR LOGGING
+  // 🔍 ENHANCED FORMAT TEXT WITH CURSOR LOGGING - keeps original functionality
   private formatText(wrapper: string): void {
     if (!this.textArea) return;
 
@@ -930,11 +982,11 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
       });
       
       // Trigger input event to sync with Y.js
-      this.textArea.dispatchEvent(new Event('input'));
+      this.textArea.dispatchEvent(new Event('input', { bubbles: true }));
     }
   }
 
-  // 🔍 ENHANCED INSERT TEXT WITH CURSOR LOGGING
+  // 🔍 ENHANCED INSERT TEXT WITH CURSOR LOGGING - keeps original functionality
   private insertText(text: string): void {
     if (!this.textArea) return;
 
@@ -961,7 +1013,7 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
     });
     
     // Trigger input event to sync with Y.js
-    this.textArea.dispatchEvent(new Event('input'));
+    this.textArea.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   private updateWordCount(): void {
@@ -1023,17 +1075,42 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
       font-weight: 500;
       z-index: 1001;
       box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      animation: slideInRight 0.3s ease-out;
     `;
+    
+    // Add animation keyframes
+    if (!document.getElementById('notification-styles')) {
+      const style = document.createElement('style');
+      style.id = 'notification-styles';
+      style.textContent = `
+        @keyframes slideInRight {
+          from { transform: translateX(100%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
     notification.textContent = message;
     
     document.body.appendChild(notification);
     
     setTimeout(() => {
-      notification.remove();
+      notification.style.animation = 'slideInRight 0.3s ease-out reverse';
+      setTimeout(() => notification.remove(), 300);
     }, 3000);
   }
 
-  // Public methods
+  // Debounce utility function
+  private debounce(func: () => void, delay: number): () => void {
+    let timeoutId: number;
+    return () => {
+      clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(func, delay);
+    };
+  }
+
+  // Public methods - keeps all original functionality
   getContent(): string {
     return this.textArea?.value || '';
   }
@@ -1057,27 +1134,43 @@ private applyMinimalDiff(ytext: Y.Text, oldContent: string, newContent: string):
   cleanup(): void {
     console.log('🧹 Cleaning up P2P editor...');
 
+    // Clear reconnect timeout
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+
+    // Clear heartbeat interval
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+
+    // Close signaling WebSocket
     if (this.signalingWs) {
       this.signalingWs.close();
       this.signalingWs = null;
     }
 
+    // Cleanup WebRTC provider and awareness
     if (this.webrtcProvider) {
+      this.webrtcProvider.awareness.destroy(); // Properly destroy awareness
       this.webrtcProvider.destroy();
       this.webrtcProvider = null;
     }
 
-    if (this.indexedDbProvider) {
-      this.indexedDbProvider.destroy();
-      this.indexedDbProvider = null;
-    }
+    // Note: IndexedDB persistence doesn't have a destroy method, it's cleaned up with the ydoc
+    this.indexedDbProvider = null;
 
+    // Cleanup Y.js document
     if (this.ydoc) {
       this.ydoc.destroy();
       this.ydoc = null;
     }
 
+    // Clear state
     this.collaborators.clear();
     this.isConnected = false;
+    this.reconnectDelay = 1000; // Reset reconnect delay
   }
 }
