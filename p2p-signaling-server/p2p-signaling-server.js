@@ -42,7 +42,10 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => {
+  ws.on('close', () => handlePeerDisconnect(ws));
+});
+
+function handlePeerDisconnect(ws){
     console.log('📡 Peer connection closing...');
     
     // Find and remove this peer
@@ -85,8 +88,8 @@ wss.on('connection', (ws) => {
     } else {
       console.log('📡 Unknown peer disconnected');
     }
-  });
-});
+
+}
 
 function handleSignalingMessage(ws, message) {
   const { type, documentId, peerId, peerInfo } = message;
@@ -112,7 +115,11 @@ function handleSignalingMessage(ws, message) {
     case 'peer_heartbeat':
       updatePeerHeartbeat(peerId);
       break;
-      
+    
+    case 'rotate_ducument_key':
+      handleDKRotation(message);
+      break;
+
     default:
       console.log(`❓ Unknown message type: ${type}`);
   }
@@ -182,6 +189,37 @@ function joinDocumentRoom(ws, documentId, peerId, peerInfo) {
   console.log(`📊 Room ${documentId} now has ${roomSize} connected peers`);
   
   console.log(`✅ Peer ${peerInfo.name} successfully joined room ${documentId}`);
+}
+
+function handleDKRotation(message){
+  const {documentId, newDKEncripted, revokedPeers = []} = message;
+
+  revokedPeers.forEach(peerId =>{
+    const session = peerSessions.get(peerId);
+    if(session){
+      const peers = documentRooms.get(documentId);
+      peers?.delete(session.ws);
+      peerSessions.delete(peerId);
+      if(session.we.readyState == 1)
+        session.we.close();
+    }
+  });
+
+    const peers = documentRooms.get(documentId);
+    if(!peers)
+      return;
+    peers.forEach(ws => {
+        if (ws.readyState === 1) {
+          ws.send(JSON.stringify({
+            type: 'dk_rotation',
+            documentId,
+            newDKEncrypted,
+            timestamp: Date.now()
+          }));
+        }
+      });
+
+    console.log(`🔑 DK rotated for document ${documentId}, revoked:`, revokedPeers);
 }
 
 function relaySignalingMessage(message) {
