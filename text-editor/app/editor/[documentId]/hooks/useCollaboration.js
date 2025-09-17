@@ -1,7 +1,8 @@
 // app/editor/[documentId]/hooks/useCollaboration.js
-import { useEditor } from "@tiptap/react";
-import { useEffect } from "react";
-import { createEditorExtensions, editorProps, editorCallbacks } from "../config/editorConfig";
+"use client"
+import { useEditor } from "@tiptap/react"
+import { useEffect } from "react"
+import { createEditorExtensions, editorProps, editorCallbacks } from "../config/editorConfig"
 
 export function useCollaboration(ydoc, provider, roomName) {
   const editor = useEditor({
@@ -10,60 +11,53 @@ export function useCollaboration(ydoc, provider, roomName) {
     editorProps,
     ...editorCallbacks,
     onSelectionUpdate: ({ editor }) => {
-    if (provider?.awareness) {
+      if (provider?.awareness && ydoc) {
         try {
-        const { from, to } = editor.state.selection;
-        const docSize = editor.state.doc.content.size;
-        
-        // Validate and clamp positions to valid ranges
-        const safeFrom = Math.max(0, Math.min(from, docSize));
-        const safeTo = Math.max(0, Math.min(to, docSize));
-        
-        provider.awareness.setLocalStateField('cursor', {
+          const { from, to } = editor.state.selection
+          const docSize = editor.state.doc.content.size
+
+          const safeFrom = Math.max(0, Math.min(from, docSize))
+          const safeTo = Math.max(0, Math.min(to, docSize))
+
+          provider.awareness.setLocalStateField("cursor", {
             anchor: safeFrom,
             head: safeTo,
-            timestamp: Date.now()
-        });
+            timestamp: Date.now(),
+          })
         } catch (error) {
-        console.warn('Cursor position update failed, skipping:', error);
-        // Don't propagate cursor position if it fails
+          console.warn("Cursor position update failed:", error)
         }
-    }
-    }
-  }, [ydoc, provider]);
+      }
+    },
+  }) // Remove dependencies to prevent editor recreation
 
-  // Y.js event listeners for debugging
+  // Y.js event listeners
   useEffect(() => {
-    if (!ydoc) return;
-    
-    let ytext;
-    try {
-      const fieldName = `editor-${roomName}`;
-      ytext = ydoc.getText(fieldName);
-    } catch (error) {
-      console.warn('Y.js getText error:', error);
-      return;
-    }
-    
-    const onYTextChange = (event) => {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('Y.Text changed:', {
-          delta: event.delta,
-          target: event.target.toString().substring(0, 100) + '...'
-        });
-      }
-    };
-    
-    ytext.observe(onYTextChange);
-    
-    return () => {
-      try {
-        ytext.unobserve(onYTextChange);
-      } catch (error) {
-        console.warn('Error unobserving Y.Text:', error);
-      }
-    };
-  }, [ydoc, roomName]);
+    if (!ydoc || !editor) return
 
-  return editor;
+    try {
+      const fieldName = `editor-${roomName}`
+      const ytext = ydoc.getText(fieldName)
+
+      const onYTextChange = (event) => {
+        if (process.env.NODE_ENV === "development") {
+          console.log("Y.Text changed:", event.delta)
+        }
+      }
+
+      ytext.observe(onYTextChange)
+
+      return () => {
+        try {
+          ytext.unobserve(onYTextChange)
+        } catch (error) {
+          console.warn("Error unobserving Y.Text:", error)
+        }
+      }
+    } catch (error) {
+      console.warn("Y.js getText error:", error)
+    }
+  }, [ydoc, editor, roomName])
+
+  return editor
 }

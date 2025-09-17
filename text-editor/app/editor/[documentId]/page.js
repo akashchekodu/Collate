@@ -11,7 +11,7 @@ export default function EditorPage() {
   return (
     <ClientOnly
       fallback={
-        <div className="min-h-screen bg-background">
+        <div className="h-screen bg-background overflow-hidden"> {/* Changed from min-h-screen */}
           <div className="sticky top-0 z-50 border-b bg-background/95">
             <div className="container flex h-16 items-center px-6">
               <div className="h-6 w-48 bg-muted animate-pulse rounded" />
@@ -21,10 +21,10 @@ export default function EditorPage() {
               </div>
             </div>
           </div>
-          <main className="py-6">
-            <div className="container max-w-5xl mx-auto p-6">
-              <div className="rounded-lg border bg-card p-8 shadow-lg">
-                <div className="flex items-center justify-center min-h-[500px]">
+          <main className="h-[calc(100vh-4rem)]"> {/* Subtract header height */}
+            <div className="container max-w-5xl mx-auto p-6 h-full">
+              <div className="rounded-lg border bg-card p-8 shadow-lg h-full">
+                <div className="flex items-center justify-center h-full">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                 </div>
               </div>
@@ -33,9 +33,9 @@ export default function EditorPage() {
         </div>
       }
     >
-      <div className="min-h-screen bg-background">
+      <div className="h-screen bg-background overflow-hidden flex flex-col"> {/* Key changes here */}
         <EditorHeader documentId={documentId} />
-        <main className="py-6">
+        <main className="flex-1 overflow-hidden"> {/* Flex-1 takes remaining space */}
           <EditorContainer documentId={documentId} />
         </main>
       </div>
