@@ -21,22 +21,15 @@ export default function EditorContainer({ documentId }) {
   // Editor collaboration
   const editor = useCollaboration(ydoc, provider, roomName);
 
-  // Cleanup editor on unmount
+  // Error handling for cursor position mapping
   useEffect(() => {
-    return () => {
-      try {
-        editor?.destroy();
-      } catch (_) {}
-    };
-  }, [editor]);
-    useEffect(() => {
     const handleError = (event) => {
       if (
         event.error?.message?.includes('Unexpected case') && 
         event.error?.stack?.includes('createAbsolutePositionFromRelativePosition')
       ) {
         console.warn('CollaborationCaret position mapping error suppressed:', event.error.message);
-        event.preventDefault(); // Prevent the error from showing in console
+        event.preventDefault();
         return false;
       }
     };
@@ -45,13 +38,20 @@ export default function EditorContainer({ documentId }) {
     return () => window.removeEventListener('error', handleError);
   }, []);
 
+  // Cleanup editor on unmount
+  useEffect(() => {
+    return () => {
+      try {
+        editor?.destroy();
+      } catch (_) {}
+    };
+  }, [editor]);
 
   return (
     <>
       <EditorStyles />
-      <div className="bg-white rounded-2xl shadow-md border p-6 flex flex-col min-h-[60vh]">
-        <EditorToolbar editor={editor} />
-        
+      <div className="flex flex-col h-full bg-gray-900 border border-gray-700 rounded-lg overflow-hidden shadow-2xl">
+        {/* Move CollaborationStatus to top */}
         <CollaborationStatus
           peerCount={peerCount}
           activePeers={activePeers}
@@ -61,10 +61,12 @@ export default function EditorContainer({ documentId }) {
           roomName={roomName}
         />
         
-        <div className="flex-1 border rounded-lg">
+        <EditorToolbar editor={editor} />
+        
+        <div className="flex-1 overflow-y-auto">
           <EditorContent 
             editor={editor} 
-            className="min-h-[400px]"
+            className="h-full min-h-[500px]"
           />
         </div>
       </div>
