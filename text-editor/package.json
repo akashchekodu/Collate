@@ -1,0 +1,77 @@
+{
+  "name": "text-editor",
+  "version": "0.1.0",
+  "private": true,
+  "main": "electron/main.js",
+  "homepage": "./",
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "electron": "NODE_ENV=production electron .",
+    "electron-dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && NODE_ENV=development electron .\"",
+    "build:app": "npm run build && npm run electron",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.3.2",
+    "@codemirror/lang-markdown": "^6.2.4",
+    "@codemirror/state": "^6.3.3",
+    "@codemirror/theme-one-dark": "^6.1.2",
+    "@codemirror/view": "^6.22.1",
+    "@tiptap/extension-collaboration": "^3.4.3",
+    "@tiptap/extension-collaboration-caret": "^3.4.3",
+    "@tiptap/extension-document": "^3.4.3",
+    "@tiptap/extension-paragraph": "^3.4.3",
+    "@tiptap/extension-placeholder": "^3.4.3",
+    "@tiptap/extension-text": "^3.4.3",
+    "@tiptap/pm": "^3.4.3",
+    "@tiptap/react": "^3.4.3",
+    "@tiptap/starter-kit": "^3.4.3",
+    "@tiptap/y-tiptap": "^3.0.0",
+    "codemirror": "^6.0.1",
+    "lucide-react": "^0.544.0",
+    "next": "15.5.3",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "y-codemirror.next": "^0.3.5",
+    "y-protocols": "^1.0.6",
+    "y-webrtc": "^10.2.5",
+    "yjs": "^13.6.27"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "concurrently": "^8.2.2",
+    "electron": "^28.1.4",
+    "electron-builder": "^24.9.1",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.3",
+    "tailwindcss": "^4",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.yourname.text-editor",
+    "productName": "P2P Text Editor",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
