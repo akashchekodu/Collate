@@ -1,7 +1,6 @@
+// electron/preload.js
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   versions: {
@@ -10,7 +9,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     electron: process.versions.electron
   },
   
-  // Add methods for future IPC communication
-  // Example: saveFile: (data) => ipcRenderer.invoke('save-file', data),
-  // Example: openFile: () => ipcRenderer.invoke('open-file'),
+  // Document persistence API
+  documents: {
+    create: (title) => ipcRenderer.invoke('documents:create', title),
+    save: (documentId, state, metadata) => ipcRenderer.invoke('documents:save', documentId, state, metadata),
+    load: (documentId) => ipcRenderer.invoke('documents:load', documentId),
+    getAll: () => ipcRenderer.invoke('documents:getAll'),
+    getRecent: (limit) => ipcRenderer.invoke('documents:getRecent', limit),
+    search: (query) => ipcRenderer.invoke('documents:search', query),
+    delete: (documentId) => ipcRenderer.invoke('documents:delete', documentId),
+    duplicate: (documentId, newTitle) => ipcRenderer.invoke('documents:duplicate', documentId, newTitle),
+    export: (documentId, format) => ipcRenderer.invoke('documents:export', documentId, format)
+  },
+
+  // Check if running in Electron
+  isElectron: true
 });
