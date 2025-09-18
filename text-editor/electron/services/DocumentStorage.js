@@ -53,6 +53,32 @@ class DocumentStorage {
     return `${timestamp}-${random}`;
   }
 
+  async updateDocumentTitle(documentId, newTitle) {
+  try {
+    const docPath = path.join(this.documentsPath, `${documentId}.json`);
+    const data = await fs.readFile(docPath, 'utf-8');
+    const documentData = JSON.parse(data);
+    
+    // Update title and timestamp
+    documentData.title = newTitle;
+    documentData.updatedAt = new Date().toISOString();
+    documentData.version = (documentData.version || 0) + 1;
+    
+    // Save updated document
+    await fs.writeFile(docPath, JSON.stringify(documentData, null, 2));
+    
+    // Update index
+    await this.updateIndex(documentId, documentData);
+    
+    console.log('📝 Document title updated:', documentId, '->', newTitle);
+    return { success: true, title: newTitle };
+  } catch (error) {
+    console.error('❌ Failed to update document title:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+
   // Save Y.js document state with TipTap HTML conversion
   async saveDocument(documentId, ydocState, metadata = {}) {
     try {

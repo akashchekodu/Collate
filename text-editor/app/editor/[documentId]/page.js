@@ -1,16 +1,39 @@
 // app/editor/[documentId]/page.js
 "use client";
 import { useParams } from "next/navigation";
-import { useState } from "react";  // Add this import
+import { useState, useEffect } from "react";
 import ClientOnly from "./components/ClientOnly";
 import EditorHeader from "./EditorHeader";
 import EditorContainer from "./EditorContainer";
 
 export default function EditorPage() {
   const { documentId } = useParams();
-  const [title, setTitle] = useState("Untitled Document");  // Add title state
+  const [title, setTitle] = useState("Untitled Document");
+  const [isElectron, setIsElectron] = useState(false);
 
-  
+  // Check if running in Electron
+  useEffect(() => {
+    setIsElectron(typeof window !== 'undefined' && window.electronAPI?.isElectron);
+  }, []);
+
+  // Load document title from storage
+  useEffect(() => {
+    const loadDocumentTitle = async () => {
+      if (!documentId || !isElectron) return;
+      
+      try {
+        const result = await window.electronAPI.documents.load(documentId);
+        if (result && result.metadata && result.metadata.title) {
+          setTitle(result.metadata.title);
+        }
+      } catch (error) {
+        console.error('Failed to load document title:', error);
+        setTitle("Untitled Document");
+      }
+    };
+
+    loadDocumentTitle();
+  }, [documentId, isElectron]);
 
   return (
     <ClientOnly
@@ -38,7 +61,7 @@ export default function EditorPage() {
       }
     >
       <div className="h-screen bg-background overflow-hidden flex flex-col">
-        <EditorHeader documentId={documentId} title={title} onTitleChange={setTitle} />
+        <EditorHeader documentId={documentId} initialTitle={title} onTitleChange={setTitle} />
         <main className="flex-1 overflow-hidden">
           <EditorContainer documentId={documentId} title={title} />
         </main>
