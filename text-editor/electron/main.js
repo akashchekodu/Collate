@@ -8,6 +8,39 @@ const DocumentStorage = require('./services/DocumentStorage');
 // Set custom userData path
 app.setPath('userData', 'D:/Collite');
 
+
+// Register custom protocol handler
+app.setAsDefaultProtocolClient('collate');
+
+// Handle protocol URLs when app is already running (macOS)
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  console.log('🔗 Protocol URL received (macOS):', url);
+  handleCollaborationUrl(url);
+});
+
+// Handle protocol URLs when app starts from protocol (Windows/Linux)
+app.on('second-instance', (event, commandLine, workingDirectory) => {
+  // Someone tried to run a second instance, focus our window instead
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+  
+  // Check if there's a protocol URL in the command line
+  const url = commandLine.find(arg => arg.startsWith('collate://'));
+  if (url) {
+    console.log('🔗 Protocol URL from second instance:', url);
+    handleCollaborationUrl(url);
+  }
+});
+
+// Ensure single instance (required for protocol handling)
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+}
+
 let documentStorage;
 let mainWindow;
 
@@ -21,6 +54,61 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('💥 Unhandled Rejection at:', promise);
   console.error('Reason:', reason);
 });
+function handleCollaborationUrl(url) {
+  try {
+    console.log('🤝 Handling collaboration URL:', url);
+    
+    // Parse: collate://collaborate?room=ABC&token=JWT&doc=DOC
+    const urlObj = new URL(url);
+    const params = new URLSearchParams(urlObj.search);
+    
+    const room = params.get('room');
+    const token = params.get('token');
+    const doc = params.get('doc');
+    
+    console.log('🔍 Extracted collaboration params:', {
+      room: room ? `${room.substring(0, 20)}...` : 'missing',
+      token: token ? 'present' : 'missing',
+      doc: doc ? doc : 'missing'
+    });
+    
+    // Validate required parameters
+    if (!room || !token || !doc) {
+      console.error('❌ Invalid collaboration URL - missing required parameters');
+      showErrorDialog('Invalid collaboration link', 'This collaboration link is missing required information.');
+      return;
+    }
+    
+    // Send to renderer process to join collaboration
+    if (mainWindow) {
+      mainWindow.webContents.send('join-collaboration', {
+        room,
+        token,
+        documentId: doc,
+        timestamp: Date.now(),
+        source: 'protocol-handler'
+      });
+      
+      // Show and focus window
+      if (!mainWindow.isVisible()) {
+        mainWindow.show();
+      }
+      mainWindow.focus();
+      
+      console.log('✅ Collaboration join request sent to renderer');
+    } else {
+      console.error('❌ No main window available for collaboration');
+    }
+  } catch (error) {
+    console.error('❌ Error handling collaboration URL:', error);
+    showErrorDialog('Protocol Error', 'Failed to process collaboration link.');
+  }
+}
+
+function showErrorDialog(title, message) {
+  const { dialog } = require('electron');
+  dialog.showErrorBox(title, message);
+}
 
 function createWindow() {
   console.log('📱 Creating window...');
@@ -130,6 +218,41 @@ app.whenReady().then(async () => {
       return [];
     }
   });
+  // Add this IPC handler to main.js after existing handlers
+ipcMain.handle('collaboration:test-join', async (event, testParams) => {
+  try {
+    console.log('🧪 Manual collaboration test triggered:', testParams);
+    
+    const { room, token, documentId } = testParams;
+    
+    // Validate test parameters
+    if (!room || !token || !documentId) {
+      console.error('❌ Missing test parameters');
+      return { success: false, error: 'Missing required parameters' };
+    }
+    
+    // Use existing handleCollaborationUrl logic
+    if (mainWindow) {
+      mainWindow.webContents.send('join-collaboration', {
+        room,
+        token,
+        documentId,
+        timestamp: Date.now(),
+        source: 'manual-test'
+      });
+      
+      console.log('✅ Manual collaboration join request sent to renderer');
+      return { success: true };
+    } else {
+      console.error('❌ No main window available');
+      return { success: false, error: 'No main window' };
+    }
+  } catch (error) {
+    console.error('❌ Error in manual collaboration test:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 
   ipcMain.handle('documents:delete', async (event, documentId) => {
     try {

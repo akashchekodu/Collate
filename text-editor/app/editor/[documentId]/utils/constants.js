@@ -32,8 +32,11 @@ export const ANIMAL_USERS = [
   { name: "🦕 Dinosaur", color: "#16A34A" },
 ];
 
-export const WEBRTC_CONFIG = {
-  signaling: ["ws://localhost:4444"],
+// Dynamic configuration based on collaboration setup
+export const getWebRTCConfig = (token = null) => ({
+  signaling: token 
+    ? [`wss://signaling-server-production-af26.up.railway.app/signal?token=${token}`]
+    : ["wss://signaling-server-production-af26.up.railway.app/signal"],
   maxConn: 20,
   filterBcConns: true,
   peerOpts: {
@@ -44,4 +47,7 @@ export const WEBRTC_CONFIG = {
       ]
     }
   }
-};
+});
+
+// Fallback for existing usage
+export const WEBRTC_CONFIG = getWebRTCConfig();

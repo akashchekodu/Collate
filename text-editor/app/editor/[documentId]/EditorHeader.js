@@ -12,17 +12,23 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useYjsRoom } from "./hooks/useYjsRoom"
 import { useAwareness } from "./hooks/useAwareness"
 import ClientOnly from "./components/ClientOnly"
+import ShareDialog from "@/app/components/ShareDialog"
 
 export default function EditorHeader({ documentId, initialTitle = "Untitled Document" }) {
   const [title, setTitle] = useState(initialTitle)
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [showShare, setShowShare] = useState(false)
   const [isElectron, setIsElectron] = useState(false)
+  
+  // Collaboration state
+  const [showShareDialog, setShowShareDialog] = useState(false)
+  const [collaborationEnabled, setCollaborationEnabled] = useState(false)
+  const [collaboratorCount, setCollaboratorCount] = useState(0)
+
   const router = useRouter()
 
   const roomName = documentId || "default-room"
-  const { provider } = useYjsRoom(roomName)
+const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId });
   const { peerCount, connectionStatus, activePeers } = useAwareness(provider, roomName)
 
   // Check if running in Electron
@@ -30,22 +36,31 @@ export default function EditorHeader({ documentId, initialTitle = "Untitled Docu
     setIsElectron(typeof window !== 'undefined' && window.electronAPI?.isElectron);
   }, []);
 
-  // Load document title on mount
+  // Load document title and collaboration status on mount
   useEffect(() => {
-    const loadDocumentTitle = async () => {
+    const loadDocumentData = async () => {
       if (!documentId || !isElectron) return;
       
       try {
         const result = await window.electronAPI.documents.load(documentId);
-        if (result && result.metadata && result.metadata.title) {
-          setTitle(result.metadata.title);
+        if (result && result.metadata) {
+          // Load title
+          if (result.metadata.title) {
+            setTitle(result.metadata.title);
+          }
+          
+          // Check collaboration status
+          if (result.metadata.collaboration) {
+            setCollaborationEnabled(true);
+            setCollaboratorCount(result.metadata.collaboration.collaborators?.length || 0);
+          }
         }
       } catch (error) {
-        console.error('Failed to load document title:', error);
+        console.error('Failed to load document data:', error);
       }
     };
 
-    loadDocumentTitle();
+    loadDocumentData();
   }, [documentId, isElectron]);
 
   // Save title changes to backend
@@ -112,10 +127,11 @@ export default function EditorHeader({ documentId, initialTitle = "Untitled Docu
     }
   }
 
-  const handleCopyLink = () => {
+  const handleCopyCurrentPageLink = () => {
     if (typeof navigator !== "undefined") {
       navigator.clipboard.writeText(window.location.href)
       // Add toast notification here if you have a toast system
+      console.log('📋 Current page link copied to clipboard');
     }
   }
 
@@ -132,6 +148,32 @@ export default function EditorHeader({ documentId, initialTitle = "Untitled Docu
       console.error('❌ Export failed:', error);
     }
   }
+
+  // Handle collaboration dialog close and refresh data
+  const handleShareDialogClose = async () => {
+    setShowShareDialog(false);
+    
+    // Refresh collaboration status
+    if (documentId && isElectron) {
+      try {
+        const result = await window.electronAPI.documents.load(documentId);
+        if (result?.metadata?.collaboration) {
+          setCollaborationEnabled(true);
+          setCollaboratorCount(result.metadata.collaboration.collaborators?.length || 0);
+        }
+      } catch (error) {
+        console.error('Failed to refresh collaboration status:', error);
+      }
+    }
+  };
+
+  // Get total collaborators (peers + established collaborators)
+  const getTotalCollaborators = () => {
+    const liveCollaborators = peerCount;
+    const establishedCollaborators = collaboratorCount;
+    // Avoid double counting if some established collaborators are currently online
+    return Math.max(liveCollaborators, establishedCollaborators);
+  };
 
   return (
     <ClientOnly
@@ -190,6 +232,13 @@ export default function EditorHeader({ documentId, initialTitle = "Untitled Docu
                 <Badge variant="outline" className="text-xs">
                   {peerCount === 0 ? "Solo" : `${peerCount} ${peerCount === 1 ? "peer" : "peers"}`}
                 </Badge>
+                
+                {/* Show total collaborators if collaboration is enabled */}
+                {collaborationEnabled && getTotalCollaborators() > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    {getTotalCollaborators()} total
+                  </Badge>
+                )}
               </div>
 
               {/* Active Peers Avatars */}
@@ -216,24 +265,17 @@ export default function EditorHeader({ documentId, initialTitle = "Untitled Docu
 
           {/* Right Section */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            <DropdownMenu open={showShare} onOpenChange={setShowShare}>
-              <DropdownMenuTrigger asChild>
-                <Button className="gap-2">
-                  <Share2 size={16} />
-                  <span className="hidden sm:inline">Share</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem onClick={handleCopyLink}>
-                  <Copy size={16} className="mr-2" />
-                  Copy Link
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Link size={16} className="mr-2" />
-                  One-time Link
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {/* Updated Share Button - Now opens ShareDialog */}
+            <Button 
+              onClick={() => setShowShareDialog(true)} 
+              className="gap-2"
+              disabled={!isElectron}
+            >
+              <Share2 size={16} />
+              <span className="hidden sm:inline">
+                {collaborationEnabled ? "Manage" : "Share"}
+              </span>
+            </Button>
 
             <Button 
               variant="outline" 
@@ -252,6 +294,10 @@ export default function EditorHeader({ documentId, initialTitle = "Untitled Docu
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleCopyCurrentPageLink}>
+                  <Copy size={16} className="mr-2" />
+                  Copy Current URL
+                </DropdownMenuItem>
                 <DropdownMenuItem>Settings</DropdownMenuItem>
                 <DropdownMenuItem>Version History</DropdownMenuItem>
                 <DropdownMenuItem>Help</DropdownMenuItem>
@@ -259,6 +305,14 @@ export default function EditorHeader({ documentId, initialTitle = "Untitled Docu
             </DropdownMenu>
           </div>
         </div>
+        
+        {/* Share Dialog */}
+        <ShareDialog 
+          documentId={documentId}
+          documentTitle={title}
+          isOpen={showShareDialog}
+          onClose={handleShareDialogClose}
+        />
       </header>
     </ClientOnly>
   )

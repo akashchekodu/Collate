@@ -12,6 +12,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0); // ✅ Add refresh trigger
+  const [testingCollaboration, setTestingCollaboration] = useState(false); // ✅ NEW: Collaboration testing state
   const router = useRouter();
 
   // ✅ Memoized loadDocuments function
@@ -104,6 +105,64 @@ export default function HomePage() {
   const handleManualRefresh = () => {
     console.log('🔄 Manual refresh triggered');
     setRefreshTrigger(prev => prev + 1);
+  };
+  // ✅ NEW: Test collaboration function
+  const testCollaboration = async () => {
+    if (!isElectron || !window.electronAPI.collaboration) {
+      alert('Collaboration testing only works in Electron app with updated preload.js');
+      return;
+    }
+
+    // Add this to testCollaboration function before creating testParams
+try {
+  // More thorough cache clearing
+  if (window.__yjs) {
+    console.log('🧹 Current Y.js providers:', Object.keys(window.__yjs.providers));
+    
+    // Destroy all existing providers
+    window.__yjs.providers.forEach((provider, roomName) => {
+      console.log('🧹 Destroying provider:', roomName);
+      provider.destroy();
+    });
+    
+    // Clear all caches
+    window.__yjs.providers.clear();
+    window.__yjs.docs.clear(); 
+    window.__yjs.refs.clear();
+    
+    console.log('✅ Y.js cache cleared completely');
+  }
+} catch (error) {
+  console.warn('⚠️ Cache clearing failed:', error);
+}
+    setTestingCollaboration(true);
+    try {
+      console.log('🧪 Testing collaboration join...');
+      const testParams = {
+        room: 'room_1758300505040_L0RQdqZB',
+        token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoicGVybWFuZW50IiwibGlua0lkIjoicGVybV9MS2UtNlFmcVBuIiwicm9vbUlkIjoicm9vbV8xNzU4MzAwNTA1MDQwX0wwUlFkcVpCIiwiZG9jdW1lbnRJZCI6Im1mcjJwbmgxLXduMWtvbmg3eiIsInBlcm1pc3Npb25zIjpbInJlYWQiLCJ3cml0ZSJdLCJleHAiOjE3NjA4OTI1MDUsImlhdCI6MTc1ODMwMDUwNSwiZGV2Ijp0cnVlLCJwZWVySWQiOiJwZWVyXzE3NTgzMDA1MDUwNDBfLUJmc21rNkgifQ.kZ4U-mL40CnH1SkUHUembzrxkMTnk37NZlYkHcGMuXw&doc=mfr2pnh1-wn1konh7z',
+        documentId: 'collaboration-test-document'
+      }; 
+      
+      const result = await window.electronAPI.collaboration.testJoin(testParams);
+      
+      if (result.success) {
+        alert('✅ Collaboration test successful! Check console and open browser to test sync.');
+        console.log('✅ Collaboration test successful');
+        console.log('📋 Next steps:');
+        console.log('1. Open browser: http://localhost:3000/editor/' + testParams.documentId);
+        console.log('2. Open console, run: setCollaborationToken("' + testParams.token + '")');
+        console.log('3. Test real-time synchronization!');
+      } else {
+        alert('❌ Collaboration test failed: ' + result.error);
+        console.error('❌ Collaboration test failed:', result);
+      }
+    } catch (error) {
+      console.error('❌ Error testing collaboration:', error);
+      alert('❌ Error testing collaboration. Check console for details.');
+    } finally {
+      setTestingCollaboration(false);
+    }
   };
 
   const formatDate = (dateString) => {
@@ -248,6 +307,56 @@ export default function HomePage() {
             </div>
           )}
         </div>
+
+        {/* ✅ NEW: Test Collaboration Section - Only shows in Electron development */}
+        {isElectron && process.env.NODE_ENV === 'development' && (
+          <div className="mt-6 pt-4 border-t">
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-semibold text-yellow-800">
+                  🧪 Development Testing
+                </h3>
+                <span className="text-xs bg-yellow-200 text-yellow-700 px-2 py-1 rounded">
+                  DEV ONLY
+                </span>
+              </div>
+              
+              <p className="text-sm text-yellow-700 mb-4">
+                Test collaboration functionality without protocol handler installation.
+              </p>
+              
+              <div className="space-y-3">
+                <button
+                  onClick={testCollaboration}
+                  disabled={testingCollaboration}
+                  className={`w-full py-2 px-4 rounded-lg font-medium transition-colors ${
+                    testingCollaboration
+                      ? 'bg-gray-400 text-white cursor-not-allowed'
+                      : 'bg-orange-600 hover:bg-orange-700 text-white'
+                  }`}
+                >
+                  {testingCollaboration ? (
+                    <span className="flex items-center justify-center">
+                      <svg className="animate-spin -ml-1 mr-3 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Testing Collaboration...
+                    </span>
+                  ) : (
+                    '🤝 Test Collaboration Join'
+                  )}
+                </button>
+                
+                <div className="text-xs text-yellow-600 space-y-1">
+                  <p><strong>Room:</strong> room_1758291824279_oJaKqWcS8</p>
+                  <p><strong>Status:</strong> Uses real authentication token</p>
+                  <p><strong>Next:</strong> Open browser, set same token, test sync</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Footer with Debug Info */}
         <div className="mt-6 pt-4 border-t text-center text-xs text-gray-500">
