@@ -1,0 +1,31 @@
+{
+  "productName": "P2P Notebook",
+  "version": "0.1.0",
+  "identifier": "com.p2pnotebook.desktop",
+  "build": {
+    "frontendDist": "./ui"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "P2P Notebook - Desktop",
+        "width": 1000,
+        "height": 700,
+        "minWidth": 600,
+        "minHeight": 400,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Simple P2P Notebook",
+    "longDescription": "A simple peer-to-peer collaborative notebook desktop application"
+  }
+}

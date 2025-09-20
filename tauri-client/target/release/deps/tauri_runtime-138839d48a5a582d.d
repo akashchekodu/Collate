@@ -1,0 +1,11 @@
+/home/adarsh/Desktop/Projects/Collate/collate/tauri-client/target/release/deps/tauri_runtime-138839d48a5a582d.d: /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/lib.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/dpi.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/monitor.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/webview.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/window.rs
+
+/home/adarsh/Desktop/Projects/Collate/collate/tauri-client/target/release/deps/libtauri_runtime-138839d48a5a582d.rlib: /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/lib.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/dpi.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/monitor.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/webview.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/window.rs
+
+/home/adarsh/Desktop/Projects/Collate/collate/tauri-client/target/release/deps/libtauri_runtime-138839d48a5a582d.rmeta: /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/lib.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/dpi.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/monitor.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/webview.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/window.rs
+
+/home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/lib.rs:
+/home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/dpi.rs:
+/home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/monitor.rs:
+/home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/webview.rs:
+/home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.8.0/src/window.rs:

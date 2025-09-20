@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories=Office;
+Comment=Simple P2P Notebook
+Exec=p2p-notebook
+StartupWMClass=p2p-notebook
+Icon=p2p-notebook
+Name=P2P Notebook
+Terminal=false
+Type=Application

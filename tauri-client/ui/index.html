@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P Notebook</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .sidebar {
+            width: 250px;
+            background: white;
+            border-right: 1px solid #e0e0e0;
+            padding: 1rem;
+            overflow-y: auto;
+        }
+        
+        .content {
+            flex: 1;
+            padding: 2rem;
+            overflow-y: auto;
+        }
+        
+        .btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+            width: 100%;
+        }
+        
+        .btn:hover {
+            background: #2980b9;
+        }
+        
+        .btn-secondary {
+            background: #95a5a6;
+        }
+        
+        .btn-secondary:hover {
+            background: #7f8c8d;
+        }
+        
+        .document-list {
+            list-style: none;
+        }
+        
+        .document-item {
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            background: #f8f9fa;
+            border-radius: 4px;
+            cursor: pointer;
+            border-left: 3px solid #3498db;
+        }
+        
+        .document-item:hover {
+            background: #e9ecef;
+        }
+        
+        .document-item.active {
+            background: #e3f2fd;
+            border-left-color: #2196f3;
+        }
+        
+        .editor {
+            background: white;
+            border-radius: 8px;
+            padding: 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            height: calc(100vh - 120px);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .editor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .document-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #2c3e50;
+            border: none;
+            background: transparent;
+            outline: none;
+        }
+        
+        .status {
+            font-size: 0.8rem;
+            color: #7f8c8d;
+        }
+        
+        .textarea {
+            flex: 1;
+            border: none;
+            outline: none;
+            font-size: 1rem;
+            line-height: 1.6;
+            resize: none;
+            font-family: inherit;
+        }
+        
+        .placeholder {
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 1.1rem;
+            margin-top: 2rem;
+        }
+        
+        .auth-section {
+            background: #fff;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            border-left: 3px solid #e74c3c;
+        }
+        
+        .auth-section h3 {
+            color: #e74c3c;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .p2p-section {
+            background: #fff;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            border-left: 3px solid #f39c12;
+        }
+        
+        .p2p-section h3 {
+            color: #f39c12;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📝 P2P Notebook</h1>
+    </div>
+    
+    <div class="main-container">
+        <div class="sidebar">
+            <!-- Auth Placeholder -->
+            <div class="auth-section">
+                <h3>🔐 Authentication</h3>
+                <p style="font-size: 0.8rem; margin-bottom: 0.5rem;">Placeholder - Not Connected</p>
+                <button class="btn btn-secondary" onclick="showAuthPlaceholder()">Setup Auth</button>
+            </div>
+            
+            <!-- P2P Placeholder -->
+            <div class="p2p-section">
+                <h3>🌐 P2P Collaboration</h3>
+                <p style="font-size: 0.8rem; margin-bottom: 0.5rem;">Placeholder - No Peers</p>
+                <button class="btn btn-secondary" onclick="showP2PPlaceholder()">Enable P2P</button>
+            </div>
+            
+            <!-- Document Management -->
+            <div style="margin-bottom: 1rem;">
+                <button class="btn" onclick="createNewDocument()">+ New Document</button>
+            </div>
+            
+            <h3 style="margin-bottom: 0.5rem; color: #2c3e50; font-size: 0.9rem;">Documents</h3>
+            <ul class="document-list" id="documentList">
+                <li class="document-item active" onclick="selectDocument('welcome')">
+                    <strong>Welcome Document</strong><br>
+                    <small>Just now</small>
+                </li>
+            </ul>
+        </div>
+        
+        <div class="content">
+            <div class="editor" id="editor">
+                <div class="editor-header">
+                    <input type="text" class="document-title" value="Welcome to P2P Notebook" id="documentTitle">
+                    <div class="status" id="status">Ready</div>
+                </div>
+                <textarea class="textarea" id="documentContent" placeholder="Start writing your document...">Welcome to P2P Notebook Desktop App!
+
+This is a minimal desktop application built with Tauri. 
+
+Current Status:
+✅ Native desktop app running
+✅ Basic document management
+✅ Simple, clean interface
+🔲 Authentication (placeholder)
+🔲 P2P collaboration (placeholder)
+🔲 Real-time sync (placeholder)
+
+Features to implement:
+- User authentication system
+- Peer-to-peer document sharing
+- Real-time collaborative editing
+- Document persistence
+- Export/import functionality
+
+This is your starting point for building a full-featured collaborative notebook application!</textarea>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Simple app state
+        let currentDocument = 'welcome';
+        let documents = {
+            'welcome': {
+                title: 'Welcome to P2P Notebook',
+                content: document.getElementById('documentContent').value
+            }
+        };
+
+        // Placeholder functions
+        function showAuthPlaceholder() {
+            alert('Authentication Placeholder\n\nThis is where you would:\n- Setup user login/signup\n- Integrate OAuth (Google, GitHub, etc.)\n- Manage user sessions\n- Handle user profiles');
+        }
+
+        function showP2PPlaceholder() {
+            alert('P2P Collaboration Placeholder\n\nThis is where you would:\n- Enable WebRTC connections\n- Setup document sharing\n- Handle real-time sync\n- Manage peer connections\n- Show online collaborators');
+        }
+
+        function createNewDocument() {
+            const title = prompt('Document title:', 'Untitled Document');
+            if (title) {
+                const id = 'doc_' + Date.now();
+                documents[id] = {
+                    title: title,
+                    content: ''
+                };
+                addDocumentToList(id, title);
+                selectDocument(id);
+            }
+        }
+
+        function addDocumentToList(id, title) {
+            const list = document.getElementById('documentList');
+            const li = document.createElement('li');
+            li.className = 'document-item';
+            li.onclick = () => selectDocument(id);
+            li.innerHTML = `<strong>${title}</strong><br><small>Just now</small>`;
+            list.appendChild(li);
+        }
+
+        function selectDocument(id) {
+            // Save current document
+            if (currentDocument && documents[currentDocument]) {
+                documents[currentDocument].content = document.getElementById('documentContent').value;
+                documents[currentDocument].title = document.getElementById('documentTitle').value;
+            }
+
+            // Switch to new document
+            currentDocument = id;
+            const doc = documents[id];
+            if (doc) {
+                document.getElementById('documentTitle').value = doc.title;
+                document.getElementById('documentContent').value = doc.content;
+                
+                // Update active state
+                document.querySelectorAll('.document-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                event.target.classList.add('active');
+            }
+        }
+
+        // Auto-save functionality
+        let saveTimeout;
+        document.getElementById('documentContent').addEventListener('input', () => {
+            document.getElementById('status').textContent = 'Typing...';
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(() => {
+                // Save current document
+                if (currentDocument && documents[currentDocument]) {
+                    documents[currentDocument].content = document.getElementById('documentContent').value;
+                    document.getElementById('status').textContent = 'Saved';
+                }
+            }, 1000);
+        });
+
+        // Title changes
+        document.getElementById('documentTitle').addEventListener('input', () => {
+            if (currentDocument && documents[currentDocument]) {
+                documents[currentDocument].title = document.getElementById('documentTitle').value;
+            }
+        });
+
+        console.log('P2P Notebook Desktop App initialized');
+    </script>
+</body>
+</html>

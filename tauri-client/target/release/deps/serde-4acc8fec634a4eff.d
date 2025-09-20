@@ -1,0 +1,11 @@
+/home/adarsh/Desktop/Projects/Collate/collate/tauri-client/target/release/deps/serde-4acc8fec634a4eff.d: /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/lib.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/integer128.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/mod.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/de.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/ser.rs
+
+/home/adarsh/Desktop/Projects/Collate/collate/tauri-client/target/release/deps/libserde-4acc8fec634a4eff.rlib: /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/lib.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/integer128.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/mod.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/de.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/ser.rs
+
+/home/adarsh/Desktop/Projects/Collate/collate/tauri-client/target/release/deps/libserde-4acc8fec634a4eff.rmeta: /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/lib.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/integer128.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/mod.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/de.rs /home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/ser.rs
+
+/home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/lib.rs:
+/home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/integer128.rs:
+/home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/mod.rs:
+/home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/de.rs:
+/home/adarsh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.224/src/private/ser.rs:

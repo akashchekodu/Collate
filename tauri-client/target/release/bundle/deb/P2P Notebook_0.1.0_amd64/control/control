@@ -1,0 +1,9 @@
+Package: p2p-notebook
+Version: 0.1.0
+Architecture: amd64
+Installed-Size: 9628
+Maintainer: Your Name
+Priority: optional
+Depends: libwebkit2gtk-4.1-0, libgtk-3-0
+Description: Simple P2P Notebook
+ A simple peer-to-peer collaborative notebook desktop application
