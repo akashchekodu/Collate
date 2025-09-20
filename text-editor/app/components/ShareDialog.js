@@ -4,8 +4,44 @@ import { useState, useEffect } from 'react';
 import { Copy, Link, Users, X, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { collaborationService } from '../services/collaborationService';
+import { collaborationService } from '../services/collabService';
 
+
+// Test if this component can import the service:
+console.log('🧪 Testing ShareDialog import compatibility...');
+
+// Check if the import would work from this component's location
+// Since this is in app/components/, the import '../services/collabService' 
+// would look for app/services/collabService.js
+
+// Test the import path
+import('../services/collabService')
+  .then(module => {
+    console.log('✅ SUCCESS: ShareDialog can import collabService!');
+    console.log('Available exports:', Object.keys(module));
+    
+    const { collaborationService } = module;
+    if (collaborationService) {
+      console.log('✅ collaborationService available');
+      console.log('Methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(collaborationService)));
+      
+      // Test basic functionality
+      return collaborationService.enableCollaboration('test-share-dialog');
+    } else {
+      console.log('❌ collaborationService not found in exports');
+    }
+  })
+  .then(result => {
+    if (result) {
+      console.log('🎉 ShareDialog integration will work!', result);
+    }
+  })
+  .catch(error => {
+    console.error('❌ ShareDialog import will fail:', error);
+    console.log('Need to fix import path or file location');
+  });
+
+  
 export default function ShareDialog({ documentId, documentTitle, isOpen, onClose }) {
   const [collaborationData, setCollaborationData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);

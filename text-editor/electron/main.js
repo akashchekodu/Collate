@@ -1,13 +1,13 @@
-// electron/main.js
+// electron/main.js - FIXED: Import app before using it
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
-const Y = require('yjs'); // ✅ Add this import for Y.js
+const Y = require('yjs');
 const DocumentStorage = require('./services/DocumentStorage');
+const CollaborationService = require('./services/CollaborationService'); // ✅ ADD: Import collaboration service
 
-// Set custom userData path
+// ✅ FIXED: Set custom userData path AFTER importing app
 app.setPath('userData', 'D:/Collite');
-
 
 // Register custom protocol handler
 app.setAsDefaultProtocolClient('collate');
@@ -42,6 +42,7 @@ if (!gotTheLock) {
 }
 
 let documentStorage;
+let collaborationService; // ✅ ADD: Collaboration service variable
 let mainWindow;
 
 // Error handling
@@ -54,11 +55,12 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('💥 Unhandled Rejection at:', promise);
   console.error('Reason:', reason);
 });
+
+// ✅ UPDATED: Enhanced collaboration URL handler
 function handleCollaborationUrl(url) {
   try {
     console.log('🤝 Handling collaboration URL:', url);
     
-    // Parse: collate://collaborate?room=ABC&token=JWT&doc=DOC
     const urlObj = new URL(url);
     const params = new URLSearchParams(urlObj.search);
     
@@ -72,33 +74,62 @@ function handleCollaborationUrl(url) {
       doc: doc ? doc : 'missing'
     });
     
-    // Validate required parameters
     if (!room || !token || !doc) {
       console.error('❌ Invalid collaboration URL - missing required parameters');
       showErrorDialog('Invalid collaboration link', 'This collaboration link is missing required information.');
       return;
     }
-    
-    // Send to renderer process to join collaboration
-    if (mainWindow) {
-      mainWindow.webContents.send('join-collaboration', {
-        room,
-        token,
-        documentId: doc,
-        timestamp: Date.now(),
-        source: 'protocol-handler'
-      });
-      
-      // Show and focus window
-      if (!mainWindow.isVisible()) {
-        mainWindow.show();
-      }
-      mainWindow.focus();
-      
-      console.log('✅ Collaboration join request sent to renderer');
+
+    // ✅ NEW: Start collaboration session as owner
+    if (collaborationService) {
+      collaborationService.startCollaboration(doc, { room, token })
+        .then(result => {
+          if (result.success) {
+            console.log('✅ Collaboration started successfully');
+            
+            // Navigate main window to document
+            if (mainWindow) {
+              mainWindow.webContents.send('navigate-to-document', {
+                documentId: doc,
+                collaborationActive: true,
+                room: room,
+                token: token
+              });
+              
+              if (!mainWindow.isVisible()) {
+                mainWindow.show();
+              }
+              mainWindow.focus();
+            }
+          } else {
+            console.error('❌ Failed to start collaboration:', result.error);
+            showErrorDialog('Collaboration Error', `Failed to start collaboration: ${result.error}`);
+          }
+        })
+        .catch(error => {
+          console.error('❌ Collaboration error:', error);
+          showErrorDialog('Collaboration Error', 'An error occurred while starting collaboration.');
+        });
     } else {
-      console.error('❌ No main window available for collaboration');
+      console.error('❌ Collaboration service not initialized');
+      
+      // Fallback: Send to renderer process directly
+      if (mainWindow) {
+        mainWindow.webContents.send('join-collaboration', {
+          room,
+          token,
+          documentId: doc,
+          timestamp: Date.now(),
+          source: 'protocol-handler'
+        });
+        
+        if (!mainWindow.isVisible()) {
+          mainWindow.show();
+        }
+        mainWindow.focus();
+      }
     }
+    
   } catch (error) {
     console.error('❌ Error handling collaboration URL:', error);
     showErrorDialog('Protocol Error', 'Failed to process collaboration link.');
@@ -145,20 +176,25 @@ function createWindow() {
   });
 }
 
-// ✅ Single app.whenReady() - removed duplicate
+// ✅ ENHANCED: Single app.whenReady() with collaboration service
 app.whenReady().then(async () => {
-  console.log('⚡ App ready, initializing document storage...');
+  console.log('⚡ App ready, initializing services...');
   
   try {
+    // Initialize document storage
     documentStorage = new DocumentStorage();
     console.log('✅ DocumentStorage initialized successfully');
+    
+    // Initialize collaboration service
+    collaborationService = new CollaborationService(documentStorage);
+    console.log('✅ CollaborationService initialized successfully');
   } catch (error) {
-    console.error('❌ Failed to initialize DocumentStorage:', error);
+    console.error('❌ Failed to initialize services:', error);
   }
 
   createWindow();
 
-  // ✅ Fixed IPC Handlers with proper Y.js usage
+  // ✅ EXISTING: IPC Handlers (keep all your existing ones)
   ipcMain.handle('documents:create', async (event, title) => {
     try {
       const docData = await documentStorage.createDocument(title);
@@ -196,16 +232,15 @@ app.whenReady().then(async () => {
     try {
       const result = await documentStorage.loadDocument(documentId);
       if (result) {
-        // ✅ Now Y is properly imported, this works
         return {
-          state: result.state, // Already serialized as array
+          state: result.state,
           metadata: result.metadata
         };
       }
       return null;
     } catch (error) {
       console.error('❌ Error loading document:', error);
-      return null; // Don't throw, return null instead
+      return null;
     }
   });
 
@@ -218,42 +253,86 @@ app.whenReady().then(async () => {
       return [];
     }
   });
-  // Add this IPC handler to main.js after existing handlers
-ipcMain.handle('collaboration:test-join', async (event, testParams) => {
-  try {
-    console.log('🧪 Manual collaboration test triggered:', testParams);
-    
-    const { room, token, documentId } = testParams;
-    
-    // Validate test parameters
-    if (!room || !token || !documentId) {
-      console.error('❌ Missing test parameters');
-      return { success: false, error: 'Missing required parameters' };
+
+  // ✅ NEW: Collaboration IPC handlers
+  ipcMain.handle('collaboration:start', async (event, documentId, collaborationData) => {
+    try {
+      if (!collaborationService) {
+        throw new Error('Collaboration service not initialized');
+      }
+      return await collaborationService.startCollaboration(documentId, collaborationData);
+    } catch (error) {
+      console.error('❌ Error starting collaboration:', error);
+      return { success: false, error: error.message };
     }
-    
-    // Use existing handleCollaborationUrl logic
-    if (mainWindow) {
-      mainWindow.webContents.send('join-collaboration', {
-        room,
-        token,
-        documentId,
-        timestamp: Date.now(),
-        source: 'manual-test'
-      });
+  });
+
+  ipcMain.handle('collaboration:stop', async (event, documentId) => {
+    try {
+      if (!collaborationService) {
+        throw new Error('Collaboration service not initialized');
+      }
+      return await collaborationService.stopCollaboration(documentId);
+    } catch (error) {
+      console.error('❌ Error stopping collaboration:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('collaboration:getActive', async () => {
+    try {
+      if (!collaborationService) {
+        return [];
+      }
+      return collaborationService.getActiveCollaborations();
+    } catch (error) {
+      console.error('❌ Error getting active collaborations:', error);
+      return [];
+    }
+  });
+
+  // ✅ NEW: Handle collaboration updates from hidden window
+  ipcMain.on('collaboration-update', (event, updateData) => {
+    console.log('📡 Received collaboration update:', updateData.documentId);
+    if (collaborationService) {
+      collaborationService.handleCollaborationUpdate(updateData.documentId, updateData);
+    }
+  });
+
+  // ✅ EXISTING: Keep all your other IPC handlers
+  ipcMain.handle('collaboration:test-join', async (event, testParams) => {
+    try {
+      console.log('🧪 Manual collaboration test triggered:', testParams);
       
-      console.log('✅ Manual collaboration join request sent to renderer');
-      return { success: true };
-    } else {
-      console.error('❌ No main window available');
-      return { success: false, error: 'No main window' };
+      const { room, token, documentId } = testParams;
+      
+      if (!room || !token || !documentId) {
+        console.error('❌ Missing test parameters');
+        return { success: false, error: 'Missing required parameters' };
+      }
+      
+      if (mainWindow) {
+        mainWindow.webContents.send('join-collaboration', {
+          room,
+          token,
+          documentId,
+          timestamp: Date.now(),
+          source: 'manual-test'
+        });
+        
+        console.log('✅ Manual collaboration join request sent to renderer');
+        return { success: true };
+      } else {
+        console.error('❌ No main window available');
+        return { success: false, error: 'No main window' };
+      }
+    } catch (error) {
+      console.error('❌ Error in manual collaboration test:', error);
+      return { success: false, error: error.message };
     }
-  } catch (error) {
-    console.error('❌ Error in manual collaboration test:', error);
-    return { success: false, error: error.message };
-  }
-});
+  });
 
-
+  // ✅ EXISTING: Keep all your other handlers (delete, duplicate, export, debug)
   ipcMain.handle('documents:delete', async (event, documentId) => {
     try {
       const success = await documentStorage.deleteDocument(documentId);
@@ -263,6 +342,27 @@ ipcMain.handle('collaboration:test-join', async (event, testParams) => {
       return { success: false, error: error.message };
     }
   });
+  // Add this IPC handler for development testing
+ipcMain.handle('collaboration:test-dev', async (event, params) => {
+  console.log('🧪 DEV: Testing collaboration with params:', params);
+  
+  try {
+    if (collaborationService) {
+      const result = await collaborationService.startCollaboration(params.documentId, {
+        room: params.room, 
+        token: params.token
+      });
+      
+      console.log('🎯 DEV: Collaboration result:', result);
+      return result;
+    }
+    return { success: false, error: 'No collaboration service' };
+  } catch (error) {
+    console.error('❌ DEV: Collaboration test failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 
   ipcMain.handle('documents:duplicate', async (event, documentId, newTitle) => {
     try {
@@ -274,35 +374,33 @@ ipcMain.handle('collaboration:test-join', async (event, testParams) => {
     }
   });
 
-  // electron/main.js - Add debug IPC handler
-ipcMain.handle('documents:debug', async (event, documentId) => {
-  try {
-    console.log('🔍 Debug request for document:', documentId);
-    
-    // Check if document file exists
-    const docPath = path.join(documentStorage.documentsPath, `${documentId}.json`);
-    const exists = await fs.access(docPath).then(() => true).catch(() => false);
-    
-    if (exists) {
-      const data = await fs.readFile(docPath, 'utf-8');
-      const doc = JSON.parse(data);
+  ipcMain.handle('documents:debug', async (event, documentId) => {
+    try {
+      console.log('🔍 Debug request for document:', documentId);
       
-      return {
-        exists: true,
-        fileSize: data.length,
-        stateLength: doc.state ? doc.state.length : 0,
-        statistics: doc.statistics,
-        title: doc.title,
-        version: doc.version
-      };
+      const docPath = path.join(documentStorage.documentsPath, `${documentId}.json`);
+      const exists = await fs.access(docPath).then(() => true).catch(() => false);
+      
+      if (exists) {
+        const data = await fs.readFile(docPath, 'utf-8');
+        const doc = JSON.parse(data);
+        
+        return {
+          exists: true,
+          fileSize: data.length,
+          stateLength: doc.state ? doc.state.length : 0,
+          statistics: doc.statistics,
+          title: doc.title,
+          version: doc.version
+        };
+      }
+      
+      return { exists: false };
+    } catch (error) {
+      console.error('❌ Debug error:', error);
+      return { exists: false, error: error.message };
     }
-    
-    return { exists: false };
-  } catch (error) {
-    console.error('❌ Debug error:', error);
-    return { exists: false, error: error.message };
-  }
-});
+  });
 
   ipcMain.handle('documents:export', async (event, documentId, format) => {
     try {

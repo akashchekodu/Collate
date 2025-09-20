@@ -1,13 +1,9 @@
 export const COLLABORATION_CONFIG = {
-  SIGNALING_SERVER: process.env.NODE_ENV === 'production' 
-    ? 'wss://signaling-server-production-af26.up.railway.app'
-    : 'ws://localhost:3003',
+  SIGNALING_SERVER:'wss://signaling-server-production-af26.up.railway.app',
   
-  WEB_CLIENT_URL: process.env.NODE_ENV === 'production'
-    ? 'https://collate-p2p-landing.vercel.app'  // Future web client
-    : 'http://localhost:3000',
+  WEB_CLIENT_URL: 'https://text-editor-nine-beta.vercel.app',
     
-  JWT_SECRET: 'dev-secret-key-12345', // Same as your signaling server
+  JWT_SECRET: '41db8ba3fa459485fc41b2a98a2d705ea32ffe41600200506949fb70f5046f02db54eeff', // Same as your signaling server
   
   TOKEN_EXPIRY: {
     PERMANENT: 30 * 24 * 60 * 60 * 1000, // 30 days
