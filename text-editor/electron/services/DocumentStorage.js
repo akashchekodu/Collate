@@ -1,12 +1,23 @@
 // electron/services/DocumentStorage.js
-const { app } = require('electron');
+const { app, protocol, net } = require('electron')
 const fs = require('fs').promises;
-const path = require('path');
+const path = require('path')
+const url = require('url')
 const os = require('os');
 const Y = require('yjs');
 
 const dataHome = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
 
+
+app.whenReady().then(() => {
+  protocol.handle('atom', async (request) => {
+    const u = new URL(request.url) // e.g., atom://local/%2Fhome%2Fuser%2Ffile.md
+    let abs = decodeURIComponent(u.pathname)      // => "/home/user/file.md" or "/C:/path"
+    if (process.platform === 'win32' && abs.startsWith('/')) abs = abs.slice(1)
+    const fileUrl = url.pathToFileURL(abs).toString()
+    return net.fetch(fileUrl)
+  })
+})
 
 class DocumentStorage {
   constructor() {
@@ -50,14 +61,21 @@ class DocumentStorage {
       console.error('❌ Failed to initialize document storage:', error);
     }
   }
- setCurrentFolder(folderPath) {
+
+  buildAtomUrl(filePath) {
+    console.log('🔗 Building atom:// URL for file:', filePath)
+    return `atom://local/${encodeURIComponent(filePath)}`
+  }
+
+  
+
+  setCurrentFolder(folderPath) {
     this.currentFolderPath = folderPath;
     console.log('📁 Current folder set to:', folderPath);
   }
-    getCurrentFolder() {
+  getCurrentFolder() {
     return this.currentFolderPath;
   }
-
   // Generate unique document ID
   generateDocumentId() {
     const timestamp = Date.now().toString(36);
@@ -88,90 +106,6 @@ class DocumentStorage {
     console.error('❌ Failed to update document title:', error);
     return { success: false, error: error.message };
   }
-}
-
-
-  // Save Y.js document state with TipTap HTML conversion
-  async saveDocument(documentId, ydocState, metadata = {}) {
-    try {
-      const docPath = path.join(this.documentsPath, `${documentId}.json`);
-      const backupPath = path.join(this.documentsPath, `${documentId}.md`);
-      console.log( "SOmethig ascasc", documentId)
-      console.log( "SOmethig ascasc", ydocState)
-      console.log( "SOmethig ascasc", metadata)
-      let plainText = '';
-      
-      if (ydocState && ydocState.length > 0) {
-        try {
-          console.log('🔍 Processing state array length:', ydocState.length);
-          const state = new Uint8Array(ydocState);
-          const tempDoc = new Y.Doc();
-          Y.applyUpdate(tempDoc, state);
-          
-          const fieldName = `editor-${documentId}`;
-          console.log('🔍 Reconstructing field:', fieldName);
-          console.log('🔍 Available shared types:', Array.from(tempDoc.share.keys()));
-          
-          if (tempDoc.share.has(fieldName)) {
-            const ytext = tempDoc.share.get(fieldName);
-            const rawContent = ytext.toString();
-            
-            console.log('📄 Raw content type:', typeof rawContent);
-            console.log('📄 Raw content length:', rawContent.length);
-            console.log('📄 Raw content preview:', JSON.stringify(rawContent.slice(0, 200)));
-            
-            // Convert TipTap HTML markup to plain text
-            plainText = this.convertTipTapHtmlToText(rawContent);
-            
-            console.log('📄 Final extracted text length:', plainText.length);
-            console.log('📄 Final extracted text preview:', JSON.stringify(plainText.slice(0, 200)));
-            
-          } else {
-            console.warn('⚠️ Field not found in reconstructed document:', fieldName);
-          }
-          
-        } catch (error) {
-          console.error('❌ Error reconstructing Y.js state:', error);
-          plainText = '';
-        }
-      }
-      
-      // Calculate statistics
-      const words = plainText.trim() ? plainText.trim().split(/\s+/).length : 0;
-      const characters = plainText.length;
-      const lines = plainText.split('\n').length;
-
-      const documentData = {
-        id: documentId,
-        title: metadata.title || 'Untitled Document',
-        state: ydocState,
-        createdAt: metadata.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        version: (metadata.version || 0) + 1,
-        statistics: { words, characters, lines },
-        tags: metadata.tags || [],
-        favorite: metadata.favorite || false
-      };
-
-      await fs.writeFile(docPath, JSON.stringify(documentData, null, 2));
-      
-      // Save backup with cleaned text content
-      if (plainText.trim()) {
-        const backupContent = `# ${documentData.title}\n\nCreated: ${documentData.createdAt}\nUpdated: ${documentData.updatedAt}\n\n---\n\n${plainText}`;
-        await fs.writeFile(backupPath, backupContent);
-        console.log('📝 Created backup file with', plainText.length, 'characters');
-      } else {
-        console.warn('⚠️ No content to backup - plainText is empty after extraction');
-      }
-      
-      await this.updateIndex(documentId, documentData);
-      console.log('💾 Document saved:', documentId, `(${words} words, ${characters} chars)`);
-      return documentData;
-      
-    } catch (error) {
-      console.error('❌ Failed to save document:', error);
-      throw error;
-    }
   }
 
   // Convert TipTap HTML markup to plain text
@@ -216,41 +150,7 @@ class DocumentStorage {
       return htmlContent; // Return original if conversion fails
     }
   }
-
-  // Load Y.js document state
-  async loadDocument(documentId) {
-    try {
-      const docPath = path.join(this.documentsPath, `${documentId}.json`);
-      const data = await fs.readFile(docPath, 'utf-8');
-      const documentData = JSON.parse(data);
-      
-      // Create new Y.Doc and apply state
-      const ydoc = new Y.Doc();
-      if (documentData.state && documentData.state.length > 0) {
-        const state = new Uint8Array(documentData.state);
-        Y.applyUpdate(ydoc, state);
-      }
-      
-      console.log('📖 Document loaded:', documentId);
-      return {
-        state: documentData.state, // Return raw state for IPC
-        metadata: {
-          id: documentData.id,
-          title: documentData.title,
-          createdAt: documentData.createdAt,
-          updatedAt: documentData.updatedAt,
-          version: documentData.version,
-          statistics: documentData.statistics,
-          tags: documentData.tags || [],
-          favorite: documentData.favorite || false
-        }
-      };
-    } catch (error) {
-      console.error('❌ Failed to load document:', error);
-      return null;
-    }
-  }
-
+  
   async getAllDocuments() {
     try {
       // If no current folder is set, use Collite internal storage
@@ -265,32 +165,36 @@ class DocumentStorage {
         return documents;
       }
 
-      // ✅ NEW: Load documents from browsed folder
       console.log('📁 Loading documents from browsed folder:', this.currentFolderPath);
-      
       const files = await fs.readdir(this.currentFolderPath);
       const textFiles = files.filter(file => {
         const ext = path.extname(file).toLowerCase();
-        return ['.txt', '.md', '.markdown', '.text'].includes(ext);
+        return ['.txt','.md','.markdown','.text'].includes(ext);
       });
 
-      console.log('📄 Found text files:', textFiles.length);
-
       const documents = [];
+
+      // Read the index once
+      const indexData = await fs.readFile(this.indexPath, 'utf-8');
+      const index = JSON.parse(indexData);
+
       for (const fileName of textFiles) {
         const filePath = path.join(this.currentFolderPath, fileName);
-        
-        try {
+
+        // ✅ Find or create metadata entry
+        let docEntry = Object.values(index).find(doc => doc.originalPath === filePath);
+
+        if (!docEntry) {
+          // Not indexed yet: create new GUID entry
           const stats = await fs.stat(filePath);
           const content = await fs.readFile(filePath, 'utf-8');
-          
-          // Calculate basic statistics
           const words = content.trim() ? content.trim().split(/\s+/).length : 0;
           const characters = content.length;
           const lines = content.split('\n').length;
 
-          documents.push({
-            id: filePath, // Use file path as ID for browsed files
+          const newId = this.generateDocumentId();
+          docEntry = {
+            id: newId,
             title: path.basename(fileName, path.extname(fileName)),
             createdAt: stats.birthtime.toISOString(),
             updatedAt: stats.mtime.toISOString(),
@@ -298,104 +202,265 @@ class DocumentStorage {
             statistics: { words, characters, lines },
             tags: ['external'],
             favorite: false,
-            isExternal: true, // Mark as external file
-            filePath: filePath // Store original path
-          });
-        } catch (error) {
-          console.warn('⚠️ Failed to read file:', fileName, error.message);
+            isExternal: true,
+            originalPath: filePath
+          };
+
+          // Save into index
+          index[newId] = docEntry;
         }
+
+        documents.push(docEntry);
       }
 
-      // Sort by modification date
+      // Persist any new entries
+      await this.saveIndex(index);
+
+      // Sort by updatedAt
       documents.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-      
+
       console.log('📁 Retrieved browsed folder documents, count:', documents.length);
       return documents;
-      
     } catch (error) {
       console.error('❌ Failed to get documents:', error);
       return [];
     }
   }
 
-  // ✅ NEW: Load external file as document
-  async loadExternalDocument(filePath) {
+  // ✅ NEW: Find existing document by file path
+  async findExternalDocumentByPath(filePath) {
     try {
-      console.log('📖 Loading external document:', filePath);
+      const indexData = await fs.readFile(this.indexPath, 'utf-8');
+      const index = JSON.parse(indexData);
       
-      const content = await fs.readFile(filePath, 'utf-8');
-      const stats = await fs.stat(filePath);
-      const fileName = path.basename(filePath, path.extname(filePath));
-
-      // Create a temporary Y.js document with the content
-      const documentId = filePath;  // use absolute path as the ID
-      const ydoc = new Y.Doc();
-      const fieldName = `editor-${documentId}`;
-      const ytext = ydoc.getText(fieldName);
-      ytext.insert(0, content);
-      
-      const state = Array.from(Y.encodeStateAsUpdate(ydoc));
-      
-      const words = content.trim() ? content.trim().split(/\s+/).length : 0;
-      const characters = content.length;
-      const lines = content.split('\n').length;
-
-      ytext.insert(0, content);
-           
-      console.log('📖 External document loaded:', filePath);
-      return {
-        state,
-        metadata: {
-          id: documentId,
-          title: fileName,
-          createdAt: stats.birthtime.toISOString(),
-          updatedAt: stats.mtime.toISOString(),
-          version: 1,
-          statistics: { words, characters, lines }, // use defined vars
-          tags: ['external'],
-          favorite: false,
-          isExternal: true,
-          filePath
-        }
-      };
+      return Object.values(index).find(doc => 
+        doc.isExternal && doc.originalPath === filePath
+      );
     } catch (error) {
-      console.error('❌ Failed to load external document:', error);
+      // Index doesn't exist or is empty
       return null;
     }
   }
 
-  // ✅ NEW: Save external document back to its original location
-  async saveExternalDocument(filePath, ydocState) {
+  // ✅ NEW: Load content for existing external document
+  async loadExternalDocumentContent(docMetadata, filePath) {
     try {
-      console.log('💾 Saving external document:', filePath);
+      // Read current file content
+      const content = await fs.readFile(filePath, 'utf-8');
+      const stats = await fs.stat(filePath);
+
+      // Update statistics if file has changed
+      const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+      const characters = content.length;
+      const lines = content.split('\n').length;
+
+      // Check if file was modified since last index
+      const fileModified = new Date(stats.mtime.toISOString()) > new Date(docMetadata.updatedAt);
       
-      // Reconstruct content from Y.js state
-      let content = '';
-      if (ydocState && ydocState.length > 0) {
-        const tempDoc = new Y.Doc();
-        const state = new Uint8Array(ydocState);
-        Y.applyUpdate(tempDoc, state);
-        
-        const documentId = `external-${path.basename(filePath)}`;
-        const fieldName = `editor-${documentId}`;
-        
-        if (tempDoc.share.has(fieldName)) {
-          const ytext = tempDoc.share.get(fieldName);
-          content = ytext.toString();
-        }
+      if (fileModified) {
+        console.log('📝 File was modified, updating metadata');
+        const updatedMetadata = {
+          ...docMetadata,
+          updatedAt: stats.mtime.toISOString(),
+          statistics: { words, characters, lines },
+          version: docMetadata.version + 1
+        };
+        await this.updateIndex(docMetadata.id, updatedMetadata);
+        docMetadata = updatedMetadata;
       }
 
-      // Save back to original file
-      await fs.writeFile(filePath, content, 'utf-8');
-      console.log('✅ External document saved:', filePath);
+      // Create Y.js document with current content
+      const ydoc = new Y.Doc();
+      const fieldName = `editor-${docMetadata.id}`;
+      const ytext = ydoc.getText(fieldName);
+      ytext.insert(0, content);
+      const state = Array.from(Y.encodeStateAsUpdate(ydoc));
+
+      return {
+        state,
+        metadata: docMetadata
+      };
+    } catch (error) {
+      console.error('❌ Failed to load external document content:', error);
+      return null;
+    }
+  }
+  // ✅ UPDATED: Load document (handles both internal and external)
+  async loadDocumentByPath(originalPath) {
+    console.log('📖 Loading document by Path:', originalPath)
+    try {
+
+        console.log('📖 originalPath path for testing:', originalPath)
+        const streamUrl = this.buildAtomUrl(originalPath)
+
+        // Optionally refresh basic stats off disk if needed
+        console.log('📖 Stream URL:', streamUrl)
+
+
+        // Check if this file is already indexed
+        let metadata = await this.findExternalDocumentByPath(originalPath);
+
+
+        return { streamUrl, metadata}
+        
+    } catch (error) {
+      console.error('❌ Failed to load document:', error)
+      return null
+    }
+  }
+  
+  // ✅ NEW: Load document by ID (handles external streaming)
+  async loadDocumentById(documentId) {
+    console.log('📖 Loading document by ID:', documentId)
+    try {
+      // Read index
+      const indexData = await fs.readFile(this.indexPath, 'utf-8')
+      const index = JSON.parse(indexData)
+
+      // Lookup metadata entry
+      const metadata = index[documentId]
+      if (!metadata) {
+        console.error('❌ No metadata found for documentId:', documentId)
+        return null
+      }
+
+      // If external, build streamUrl
+      if (metadata.isExternal && metadata.originalPath) {
+        console.log('📖 External document detected, streaming from original path:', metadata.originalPath)
+        const streamUrl = this.buildAtomUrl(metadata.originalPath)
+        console.log('📖 External stream URL:', streamUrl)
+        return { streamUrl, metadata }
+      }
+
+      // Otherwise, return internal state loader
+      console.log('📖 Internal document load requested for ID:', documentId)
+      // Return null here so your existing loadDocument logic handles it
+      return { streamUrl: null, metadata }
+    } catch (error) {
+      console.error('❌ Failed to load document by ID:', error)
+      return null
+    }
+  }
+
+  // ✅ UPDATED: Save document (handles both internal and external)
+  async saveDocument(documentId, ydocState, metadata = {}) {
+    try {
+      // Check if this is an external document
+      const indexData = await fs.readFile(this.indexPath, 'utf-8');
+      const index = JSON.parse(indexData);
+      const docMetadata = index[documentId];
+
+      if (docMetadata && docMetadata.isExternal) {
+        console.log('💾 Saving external document:', documentId);
+        return await this.saveExternalDocument(docMetadata.originalPath, ydocState, documentId);
+      }
+
+      // Otherwise, save as internal Collite document (existing logic)
+      const docPath = path.join(this.documentsPath, `${documentId}.json`);
+      const backupPath = path.join(this.documentsPath, `${documentId}.md`);
       
+      let plainText = '';
+      
+      if (ydocState && ydocState.length > 0) {
+        try {
+          const state = new Uint8Array(ydocState);
+          const tempDoc = new Y.Doc();
+          Y.applyUpdate(tempDoc, state);
+          
+          const fieldName = `editor-${documentId}`;
+          
+          if (tempDoc.share.has(fieldName)) {
+            const ytext = tempDoc.share.get(fieldName);
+            const rawContent = ytext.toString();
+            plainText = this.convertTipTapHtmlToText(rawContent);
+          }
+        } catch (error) {
+          console.error('❌ Error reconstructing Y.js state:', error);
+          plainText = '';
+        }
+      }
+      
+      // Calculate statistics
+      const words = plainText.trim() ? plainText.trim().split(/\s+/).length : 0;
+      const characters = plainText.length;
+      const lines = plainText.split('\n').length;
+
+      const documentData = {
+        id: documentId,
+        title: metadata.title || 'Untitled Document',
+        state: ydocState,
+        createdAt: metadata.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        version: (metadata.version || 0) + 1,
+        statistics: { words, characters, lines },
+        tags: metadata.tags || [],
+        favorite: metadata.favorite || false
+      };
+
+      await fs.writeFile(docPath, JSON.stringify(documentData, null, 2));
+      
+      // Save backup
+      if (plainText.trim()) {
+        const backupContent = `# ${documentData.title}\n\nCreated: ${documentData.createdAt}\nUpdated: ${documentData.updatedAt}\n\n---\n\n${plainText}`;
+        await fs.writeFile(backupPath, backupContent);
+      }
+      
+      await this.updateIndex(documentId, documentData);
+      console.log('💾 Internal document saved:', documentId);
+      return documentData;
+      
+    } catch (error) {
+      console.error('❌ Failed to save document:', error);
+      throw error;
+    }
+  }
+
+  // ✅ UPDATED: Save external document back to original location
+  async saveExternalDocument(filePath, ydocState, documentId) {
+    try {
+      console.log('💾 Saving external document to:', filePath);
+      
+      // // Reconstruct content from Y.js state
+      // let content = '';
+      // if (ydocState && ydocState.length > 0) {
+      //   const tempDoc = new Y.Doc();
+      //   const state = new Uint8Array(ydocState);
+      //   Y.applyUpdate(tempDoc, state);
+        
+      //   const fieldName = `editor-${documentId}`;
+        
+      //   if (tempDoc.share.has(fieldName)) {
+      //     const ytext = tempDoc.share.get(fieldName);
+      //     content = ytext.toString();
+      //   }
+      // }
+
+      // // Save back to original file
+      // await fs.writeFile(filePath, content, 'utf-8');
+      
+      // Update metadata in index
+      const stats = await fs.stat(filePath);
+      const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+      const characters = content.length;
+      const lines = content.split('\n').length;
+
+      const indexData = await fs.readFile(this.indexPath, 'utf-8');
+      const index = JSON.parse(indexData);
+      
+      if (index[documentId]) {
+        index[documentId].updatedAt = stats.mtime.toISOString();
+        index[documentId].statistics = { words, characters, lines };
+        index[documentId].version += 1;
+        await this.saveIndex(index);
+      }
+
+      console.log('✅ External document saved:', filePath);
       return { success: true };
     } catch (error) {
       console.error('❌ Failed to save external document:', error);
       return { success: false, error: error.message };
     }
   }
-
 
   // Get recent documents
   async getRecentDocuments(limit = 10) {
@@ -419,7 +484,7 @@ class DocumentStorage {
     }
   }
 
-  // Update document index
+  // ✅ UPDATED: Update document index to include originalPath for external docs
   async updateIndex(documentId, documentData) {
     try {
       let index = {};
@@ -438,14 +503,19 @@ class DocumentStorage {
         version: documentData.version,
         statistics: documentData.statistics,
         tags: documentData.tags,
-        favorite: documentData.favorite
+        favorite: documentData.favorite,
+        // ✅ ADD: Include external document properties
+        isExternal: documentData.isExternal || false,
+        originalPath: documentData.originalPath || null
       };
 
       await this.saveIndex(index);
+      console.log('📋 Index updated for document:', documentId);
     } catch (error) {
       console.error('❌ Failed to update index:', error);
     }
   }
+
 
   async saveIndex(index) {
     await fs.writeFile(this.indexPath, JSON.stringify(index, null, 2));

@@ -13,7 +13,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   documents: {
     create: (title) => ipcRenderer.invoke('documents:create', title),
     save: (documentId, state, metadata) => ipcRenderer.invoke('documents:save', documentId, state, metadata),
-    load: (idOrPath) => ipcRenderer.invoke('documents:load', idOrPath),
+    loadByPath: (originalPath) => ipcRenderer.invoke('documents:loadByPath', originalPath),
+    loadById: (documentId) => ipcRenderer.invoke('documents:loadById', documentId),
     getAll: () => ipcRenderer.invoke('documents:getAll'),
     getRecent: (limit) => ipcRenderer.invoke('documents:getRecent', limit),
     search: (query) => ipcRenderer.invoke('documents:search', query),

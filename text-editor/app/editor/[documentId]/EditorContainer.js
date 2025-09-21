@@ -19,9 +19,16 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
 
   const { ydoc, provider } = useYjsRoom(roomName)
   const { peerCount, connectionStatus, activePeers } = useAwareness(provider, roomName)
+
+  const { 
+  editor, 
+  saveStatus, 
+  saveDocument, 
+  getYText, 
+  isExternalDocument 
+  } = useCollaboration(ydoc, provider, roomName, title)
+
   
-  // ✅ Fixed: Include getYText in destructuring
-  const { editor, saveStatus, saveDocument, getYText } = useCollaboration(ydoc, provider, roomName, title)
 
 // app/editor/[documentId]/EditorContainer.js - Safe debug function
   const debugYjsState = () => {
@@ -88,87 +95,54 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
 }
 
 
-  // ✅ Fixed debug function with safe Y.Text access
+  // ✅ UPDATED: Debug functions that handle both internal and external
   const debugEditorContent = () => {
-    if (!editor || !ydoc) {
-      console.warn('❌ Editor or Y.js document not ready');
-      return;
+    if (!editor) {
+      console.warn('❌ Editor not ready')
+      return
     }
 
-    try {
-      const editorText = editor.getText();
-      const editorHTML = editor.getHTML();
-      const fieldName = `editor-${documentId}`;
+    const editorText = editor.getText()
+    const editorHTML = editor.getHTML()
+    
+    console.log('🔍 CONTENT DEBUG:')
+    console.log('📝 Document Type:', isExternalDocument ? 'External' : 'Internal')
+    console.log('📝 TipTap text:', JSON.stringify(editorText.slice(0, 100)))
+    console.log('📝 TipTap HTML:', JSON.stringify(editorHTML.slice(0, 200)))
+    console.log('📊 Content length:', editorText.length)
+
+    if (!isExternalDocument && ydoc) {
+      // Only debug Y.js for internal documents
+      const fieldName = `editor-${documentId}`
       
-      // ✅ Safe Y.Text access with multiple fallbacks
-      let yjsText = '';
+      let yjsText = ''
       try {
         if (getYText) {
-          const ytext = getYText();
-          yjsText = ytext ? ytext.toString() : '';
-        } else {
-          // Fallback: direct access
-          if (ydoc.share && ydoc.share.has(fieldName)) {
-            yjsText = ydoc.share.get(fieldName).toString();
-          } else {
-            const ytext = ydoc.getText(fieldName);
-            yjsText = ytext.toString();
-          }
+          const ytext = getYText()
+          yjsText = ytext ? ytext.toString() : ''
+        } else if (ydoc.share && ydoc.share.has(fieldName)) {
+          yjsText = ydoc.share.get(fieldName).toString()
         }
-      } catch (error) {
-        console.error('❌ Error accessing Y.Text:', error);
-        yjsText = '[ERROR]';
-      }
-      
-      console.log('🔍 CONTENT DEBUG:');
-      console.log('📝 TipTap text:', JSON.stringify(editorText.slice(0, 100)));
-      console.log('📝 TipTap HTML:', JSON.stringify(editorHTML.slice(0, 200)));
-      console.log('📄 Y.js field:', fieldName);
-      console.log('📄 Y.js text:', JSON.stringify(yjsText.slice(0, 100)));
-      console.log('📊 TipTap length:', editorText.length);
-      console.log('📊 Y.js length:', yjsText.length);
-      console.log('🔗 Contents match:', editorText === yjsText);
-      
-      // Check Y.js state
-      try {
-        const state = Y.encodeStateAsUpdate(ydoc);
-        console.log('📦 Y.js state size:', state.length, 'bytes');
         
-        // Test state reconstruction
-        if (state.length > 0) {
-          const tempDoc = new Y.Doc();
-          Y.applyUpdate(tempDoc, state);
-          const reconstructedText = tempDoc.getText(fieldName).toString();
-          console.log('🔄 Reconstructed text:', JSON.stringify(reconstructedText.slice(0, 100)));
-        }
+        console.log('📄 Y.js text:', JSON.stringify(yjsText.slice(0, 100)))
+        console.log('📊 Y.js length:', yjsText.length)
+        console.log('🔗 Contents match:', editorText === yjsText)
       } catch (error) {
-        console.error('❌ Error getting Y.js state:', error);
+        console.error('❌ Error accessing Y.Text:', error)
       }
-      
-      // Analyze sync issues
-      if (editorText.length > 0 && yjsText.length === 0) {
-        console.error('❌ SYNC ISSUE: Editor has content but Y.js is empty!');
-        console.log('🔧 This indicates TipTap → Y.js sync is broken');
-      } else if (editorText.length === 0 && yjsText.length > 0) {
-        console.error('❌ SYNC ISSUE: Y.js has content but editor is empty!');
-        console.log('🔧 This indicates Y.js → TipTap sync is broken');
-      } else if (editorText.length === 0 && yjsText.length === 0) {
-        console.warn('⚠️ Both editor and Y.js are empty - type some content first');
-      } else {
-        console.log('✅ Content sync looks good!');
-      }
-      
-    } catch (error) {
-      console.error('❌ Debug function error:', error);
     }
-  };
-
-  // ✅ Fixed force sync function
-const forceContentSync = () => {
-  if (!editor || !ydoc) {
-    console.error('❌ Editor or Y.js not ready for sync');
-    return;
   }
+
+  const forceContentSync = () => {
+    if (isExternalDocument) {
+      console.log('⚠️ Force sync not applicable to external documents')
+      return
+    }
+
+    if (!editor || !ydoc) {
+      console.error('❌ Editor or Y.js not ready for sync')
+      return
+    }
 
   try {
     // ✅ Fixed: Ensure editorContent is a string
@@ -220,66 +194,40 @@ const forceContentSync = () => {
   }
 };
 
-// ✅ Fixed test save operation
+  // ✅ UPDATED: Test save operation
   const testSaveOperation = async () => {
-    console.log('🧪 TESTING SAVE OPERATION:');
-    debugEditorContent();
+    console.log('🧪 TESTING SAVE OPERATION:')
+    console.log('📝 Document Type:', isExternalDocument ? 'External' : 'Internal')
+    debugEditorContent()
     
-    if (ydoc) {
-      const state = Y.encodeStateAsUpdate(ydoc);
-      console.log('📦 Sending state to save (size):', state.length);
-      console.log('📦 State array preview:', Array.from(state).slice(0, 20));
-      
-      try {
-        await saveDocument();
-        console.log('✅ Save operation completed - check Electron console for storage logs');
-      } catch (error) {
-        console.error('❌ Save operation failed:', error);
-      }
+    try {
+      await saveDocument()
+      console.log('✅ Save operation completed')
+    } catch (error) {
+      console.error('❌ Save operation failed:', error)
     }
-  };
+  }
 
-  // ✅ Monitor editor updates with safe Y.Text access
+
+  // ✅ UPDATED: Monitor editor updates (skip Y.js checks for external docs)
   useEffect(() => {
-    if (editor && ydoc) {
+    if (editor) {
       const handleUpdate = ({ editor, transaction }) => {
         if (transaction.docChanged) {
-          const content = editor.getText();
-          console.log('📝 Editor updated - content length:', content.length);
+          const content = editor.getText()
+          console.log('📝 Editor updated - content length:', content.length)
           
-          // Check Y.js content after editor update
-          try {
-            const fieldName = `editor-${documentId}`;
-            let yjsContent = '';
-            
-            if (getYText) {
-              const ytext = getYText();
-              yjsContent = ytext ? ytext.toString() : '';
-            } else {
-              if (ydoc.share && ydoc.share.has(fieldName)) {
-                yjsContent = ydoc.share.get(fieldName).toString();
-              }
-            }
-            
-            console.log('📄 Y.js content after editor update:', yjsContent.length);
-            
-            if (content.length !== yjsContent.length) {
-              console.warn('⚠️ SYNC MISMATCH after editor update!');
-              console.log('📝 Editor length:', content.length, '📄 Y.js length:', yjsContent.length);
-            }
-          } catch (error) {
-            console.warn('❌ Error checking Y.js content after editor update:', error);
+          // Only check Y.js sync for internal documents
+          if (!isExternalDocument && ydoc) {
+            // ... your existing Y.js sync checking logic
           }
         }
-      };
+      }
 
-      editor.on('update', handleUpdate);
-      
-      return () => {
-        editor.off('update', handleUpdate);
-      };
+      editor.on('update', handleUpdate)
+      return () => editor.off('update', handleUpdate)
     }
-  }, [editor, ydoc, documentId, getYText]);
+  }, [editor, ydoc, documentId, getYText, isExternalDocument])
 
   useEffect(() => {
     const handleError = (event) => {
@@ -324,54 +272,58 @@ const forceContentSync = () => {
       <EditorStyles />
       <div className="h-full flex flex-col bg-white">
         <CollaborationStatus
-          peerCount={peerCount}
-          activePeers={activePeers}
-          connectionStatus={connectionStatus}
+          peerCount={isExternalDocument ? 0 : peerCount}
+          activePeers={isExternalDocument ? [] : activePeers}
+          connectionStatus={isExternalDocument ? 'disconnected' : connectionStatus}
           ydoc={ydoc}
           provider={provider}
           roomName={roomName}
         />
 
-        {/* Enhanced toolbar with save indicator and debug buttons */}
+        {/* Enhanced toolbar */}
         <div className="flex items-center justify-between border-b bg-muted/20">
           <div className="flex items-center gap-2">
             <EditorToolbar editor={editor} />
             
-            {/* Your existing debug buttons remain the same... */}
-            {process.env.NODE_ENV === 'development' && editor && ydoc && (
+            {process.env.NODE_ENV === 'development' && editor && (
               <div className="flex gap-1 ml-4 border-l pl-4">
-                <button
-                  onClick={debugTipTapContent}
-                  className="px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
-                  title="Debug TipTap content structure"
-                >
-                  🔬 TipTap Debug
-                </button>
-                <button
-                  onClick={debugYjsState}
-                  className="px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
-                  title="Debug Y.js state and reconstruction"
-                >
-                  🔬 Y.js Debug
-                </button>
                 <button
                   onClick={debugEditorContent}
                   className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors"
-                  title="Debug content sync between TipTap and Y.js"
+                  title="Debug content"
                 >
                   🔍 Debug
                 </button>
-                <button
-                  onClick={forceContentSync}
-                  className="px-2 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 transition-colors"
-                  title="Force sync editor content to Y.js"
-                >
-                  🔧 Sync
-                </button>
+                {/* ✅ UPDATED: Only show Y.js specific buttons for internal docs */}
+                {!isExternalDocument && ydoc && (
+                  <>
+                    <button
+                      onClick={debugTipTapContent}
+                      className="px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
+                      title="Debug TipTap content structure"
+                    >
+                      🔬 TipTap Debug
+                    </button>
+                    <button
+                      onClick={debugYjsState}
+                      className="px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
+                      title="Debug Y.js state and reconstruction"
+                    >
+                      🔬 Y.js Debug
+                    </button>
+                    <button
+                      onClick={forceContentSync}
+                      className="px-2 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 transition-colors"
+                      title="Force sync editor content to Y.js"
+                    >
+                      🔧 Sync
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={testSaveOperation}
                   className="px-2 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors"
-                  title="Test save operation with current content"
+                  title="Test save operation"
                 >
                   💾 Test Save
                 </button>
@@ -384,6 +336,7 @@ const forceContentSync = () => {
           </div>
         </div>
 
+        {/* Editor content area - unchanged */}
         <div className="flex-1 overflow-auto">
           {editor ? (
             <EditorContent
@@ -401,14 +354,19 @@ const forceContentSync = () => {
           )}
         </div>
 
-        {/* Development info panel */}
+        {/* ✅ UPDATED: Development info panel */}
         {process.env.NODE_ENV === 'development' && (
           <div className="border-t bg-gray-50 p-2 text-xs text-gray-600">
             <div className="flex items-center justify-between">
               <span>Document ID: <code>{documentId}</code></span>
-              <span>Field: <code>editor-{documentId}</code></span>
+              <span>Type: <code>{isExternalDocument ? 'External' : 'Internal'}</code></span>
               <span>Save Status: <code>{saveStatus}</code></span>
-              <span>Y.js Ready: <code>{!!ydoc}</code></span>
+              {!isExternalDocument && (
+                <>
+                  <span>Y.js Ready: <code>{!!ydoc}</code></span>
+                  <span>Field: <code>editor-{documentId}</code></span>
+                </>
+              )}
               <span>Editor Ready: <code>{!!editor}</code></span>
             </div>
           </div>
@@ -417,6 +375,7 @@ const forceContentSync = () => {
     </>
   )
 }
+
 
 export default function EditorContainer({ documentId, title }) {
   return (

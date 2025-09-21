@@ -77,9 +77,9 @@ export default function HomePage() {
         console.log('📄 File selected:', filePath);
         
         // Load the external file as a document and navigate
-        const loaded = await window.electronAPI.documents.load(filePath);
+        const loaded = await window.electronAPI.documents.loadByPath(filePath);
         if (loaded) {
-          console.log('✅ External document loaded:', loaded.metadata.id);
+          console.log('✅ External document loaded:', loaded);
           router.push(`/editor/${loaded.metadata.id}`);
         }
       }

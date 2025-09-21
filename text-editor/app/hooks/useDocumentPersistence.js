@@ -84,21 +84,20 @@ export function useDocumentPersistence(ydoc, documentId, title = "Untitled Docum
   }, [saveDocument, isElectron]);
 
   const loadDocument = useCallback(async () => {
-    if (!documentId || !isElectron) return null;
-
+    console.log('📖 WAAAAAAAAAATTTTTTTTTTTTTTTTTT', documentId);
     try {
-      const result = await window.electronAPI.documents.load(documentId);
-      if (result && result.state) {
+      const result = await window.electronAPI.documents.loadById(documentId);
+      console.log('📖 GOOOOOOOOOOOOOOOO Load result:', result);
+      if (result) {
         console.log('📖 Document loaded from storage:', documentId);
         return {
-          state: result.state,
-          metadata: result.metadata
+          metadata: result.metadata,
+          streamUrl: result.streamUrl
         };
       }
     } catch (error) {
       console.error('❌ Failed to load document:', error);
     }
-    return null;
   }, [documentId, isElectron]);
 
   const forceSave = useCallback(() => {

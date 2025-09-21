@@ -90,7 +90,7 @@ export class CollaborationService {
       // Try to load existing collaboration data
       if (this.isElectron) {
         console.log('📱 Using Electron document storage');
-        const currentDoc = await window.electronAPI.documents.load(documentId);
+        const currentDoc = await window.electronAPI.documents.loadById(documentId);
         collaborationData = currentDoc?.metadata?.collaboration;
       } else {
         console.log('🌐 Using browser fallback storage');
@@ -199,7 +199,7 @@ export class CollaborationService {
     try {
       if (this.isElectron && window.electronAPI?.documents) {
         console.log('💾 Saving to Electron storage');
-        const currentDoc = await window.electronAPI.documents.load(documentId);
+        const currentDoc = await window.electronAPI.documents.loadById(documentId);
         if (currentDoc) {
           const updatedMetadata = {
             ...currentDoc.metadata,
@@ -260,7 +260,7 @@ export class CollaborationService {
 
     try {
       if (this.isElectron && window.electronAPI?.documents) {
-        const doc = await window.electronAPI.documents.load(documentId);
+        const doc = await window.electronAPI.documents.loadById(documentId);
         const collaboration = doc?.metadata?.collaboration || null;
         console.log('📋 Retrieved collaboration data (Electron):', collaboration);
         return collaboration;

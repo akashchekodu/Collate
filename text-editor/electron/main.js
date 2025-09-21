@@ -1,5 +1,5 @@
 // electron/main.js - FIXED: Import app before using it
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol } = require('electron');
 const os = require('os');
 const path = require('path');
 const fs = require('fs').promises;
@@ -7,6 +7,21 @@ const Y = require('yjs');
 
 const DocumentStorage = require('./services/DocumentStorage');
 const CollaborationService = require('./services/CollaborationService'); // ✅ ADD: Import collaboration service
+
+
+const url = require('url')
+
+// MUST be before app.whenReady()
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'atom',
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    corsEnabled: true,
+  }
+}])
+
 
 const dataHome = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
 
@@ -232,22 +247,24 @@ app.whenReady().then(async () => {
     }
   });
 // ✅ MODIFIED: Load document (handle both internal and external)
-  ipcMain.handle('documents:load', async (event, idOrPath) => {
-    if (await fs.access(idOrPath).then(() => true).catch(() => false)) {
-      return await documentStorage.loadExternalDocument(idOrPath);
-    } else {
-      return await documentStorage.loadDocument(idOrPath);
-    }
+  ipcMain.handle('documents:loadByPath', async (event, originalPath) => {
+    return await documentStorage.loadDocumentByPath(originalPath);
   });
-  // ✅ NEW: Save external document
-  ipcMain.handle('documents:saveExternal', async (event, filePath, state) => {
+    ipcMain.handle('documents:loadById', async (event, documentId) => {
+    return await documentStorage.loadDocumentById(documentId);
+  });
+
+  ipcMain.handle('documents:saveExternal', async (event, filePath, content) => {
     try {
-      return await documentStorage.saveExternalDocument(filePath, state);
+      // Write plain text content directly to file
+      await fs.writeFile(filePath, content, 'utf-8')
+      console.log('✅ External document saved:', filePath)
+      return { success: true }
     } catch (error) {
-      console.error('❌ Error saving external document:', error);
-      return { success: false, error: error.message };
+      console.error('❌ This Failed to save external document:', error)
+      return { success: false, error: error.message }
     }
-  });
+  })
 
   ipcMain.handle('documents:getAll', async () => {
     try {
@@ -465,7 +482,7 @@ app.whenReady().then(async () => {
     }
   });
 
-
+  
   // ✅ NEW: Import file handler
   ipcMain.handle('documents:importFile', async (event, filePath) => {
     try {
@@ -549,7 +566,7 @@ app.whenReady().then(async () => {
     }
   });
 
-  // ✅ NEW: Get recent documents handler (if you want a separate endpoint)
+  // X: Get recent documents handler (if you want a separate endpoint)
   ipcMain.handle('documents:getRecent', async (event, limit = 10) => {
     try {
       console.log('📚 Getting recent documents, limit:', limit);
@@ -564,7 +581,7 @@ app.whenReady().then(async () => {
     }
   });
 
-  // ✅ NEW: Search documents handler
+  // X: Search documents handler
   ipcMain.handle('documents:search', async (event, query) => {
     try {
       console.log('🔍 Searching documents for:', query);

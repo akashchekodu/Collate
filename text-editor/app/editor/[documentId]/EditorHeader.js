@@ -42,7 +42,7 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
       if (!documentId || !isElectron) return;
       
       try {
-        const result = await window.electronAPI.documents.load(documentId);
+        const result = await window.electronAPI.documents.loadById(documentId);
         if (result && result.metadata) {
           // Load title
           if (result.metadata.title) {
@@ -70,7 +70,7 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
     setIsSaving(true);
     try {
       // Get current document state
-      const currentDoc = await window.electronAPI.documents.load(documentId);
+      const currentDoc = await window.electronAPI.documents.loadById(documentId);
       if (currentDoc) {
         // Save with updated title
         await window.electronAPI.documents.save(documentId, currentDoc.state, {
@@ -156,7 +156,7 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
     // Refresh collaboration status
     if (documentId && isElectron) {
       try {
-        const result = await window.electronAPI.documents.load(documentId);
+        const result = await window.electronAPI.documents.loadById(documentId);
         if (result?.metadata?.collaboration) {
           setCollaborationEnabled(true);
           setCollaboratorCount(result.metadata.collaboration.collaborators?.length || 0);

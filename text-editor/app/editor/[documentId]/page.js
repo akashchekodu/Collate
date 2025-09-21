@@ -26,7 +26,8 @@ export default function EditorPage() {
       if (!documentId || !isElectron) return;
       
       try {
-        const result = await window.electronAPI.documents.load(documentId);
+        const result = await window.electronAPI.documents.loadById(documentId);
+        console.log('📄 Loaded document metadata:', result);
         if (result && result.metadata && result.metadata.title) {
           setTitle(result.metadata.title);
         }
