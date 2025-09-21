@@ -14,49 +14,39 @@ export function useCollaboration(ydoc, provider, roomName, title = "Untitled Doc
   const [isExternalDocument, setIsExternalDocument] = useState(false);
   const { saveDocument, loadDocument, saveStatus } = useDocumentPersistence(ydoc, roomName, title);
   const isLoadedRef = useRef(false);
-  const ytextRef = useRef(null);
 
-  // ✅ Safe Y.Text getter with error handling
+  // ✅ Safe Y.Text getter
   const getYText = useCallback(() => {
     if (!ydoc || !roomName) return null;
     const fieldName = `editor-${roomName}`;
     return getSafeYText(ydoc, fieldName);
   }, [ydoc, roomName]);
 
+  // ✅ SIMPLIFIED: Load content without Y.js complexity
   useEffect(() => {
     async function loadSavedContent() {
       if (!ydoc || isLoadedRef.current) return;
 
       try {
-        console.log('📖 Loading saved content for document:', roomName);
+        console.log('📖 Loading document:', roomName);
         const savedDoc = await loadDocument();
 
-        console.log('📡 Streaming external file from:', savedDoc);
-        setIsExternalDocument(true);
-
-        // Fetch atom:// stream
-        const response = await fetch(savedDoc.streamUrl);
-        console.log('📡 Stream fetch response:', response.status, response.statusText);
-        const fileContent = await response.text();
-        console.log('📄 External file content length:', fileContent.length);
-
-        // Insert into Y.Text
-        const ytext = getYText();
-        if (ytext) {
-          ytext.delete(0, ytext.length);
-          ytext.insert(0, fileContent);
-          console.log('✅ External file loaded into Y.Text:', fileContent.length, 'chars');
-        }else if (savedDoc?.state) {
-          // ✅ EXISTING: Internal document - apply Y.js state
-          console.log('📄 Loading internal document with Y.js state');
+        if (savedDoc?.streamUrl) {
+          // External document - just load text for display
+          console.log('📡 Loading external file from:', savedDoc.streamUrl);
+          setIsExternalDocument(true);
+        } else if (savedDoc?.state) {
+          // Internal document - apply Y.js state as before
+          console.log('📄 Loading internal document');
           setIsExternalDocument(false);
-          
           const state = new Uint8Array(savedDoc.state);
           Y.applyUpdate(ydoc, state);
-          console.log('📚 Restored document from local storage');
+        } else {
+          console.log('📄 New document');
+          setIsExternalDocument(false);
         }
       } catch (error) {
-        console.warn('Failed to load saved document:', error);
+        console.warn('Failed to load document:', error);
       }
 
       setInitialContent(true);
@@ -64,127 +54,74 @@ export function useCollaboration(ydoc, provider, roomName, title = "Untitled Doc
     }
 
     loadSavedContent();
-  }, [ydoc, loadDocument, getYText]);
+  }, [ydoc, loadDocument, roomName]);
 
-  // ✅ UNCHANGED: Editor creation with Y.js extensions
+  // ✅ SIMPLIFIED: Editor with basic content loading
   const editor = useEditor({
     extensions: createEditorExtensions(ydoc, provider, roomName),
     immediatelyRender: false,
     editorProps,
     ...editorCallbacks,
-    onSelectionUpdate: ({ editor }) => {
-      if (provider?.awareness && ydoc) {
+    
+    // ✅ Load file content after editor is ready
+    onCreate: async ({ editor }) => {
+      if (isExternalDocument) {
         try {
-          const { from, to } = editor.state.selection
-          const docSize = editor.state.doc.content.size
-
-          const safeFrom = Math.max(0, Math.min(from, docSize))
-          const safeTo = Math.max(0, Math.min(to, docSize))
-
-          provider.awareness.setLocalStateField("cursor", {
-            anchor: safeFrom,
-            head: safeTo,
-            timestamp: Date.now(),
-          })
+          const savedDoc = await loadDocument();
+          if (savedDoc?.streamUrl) {
+            const response = await fetch(savedDoc.streamUrl);
+            const content = await response.text();
+            editor.commands.setContent(content);
+            console.log('✅ External file loaded into editor');
+          }
         } catch (error) {
-          console.warn("Cursor position update failed:", error)
+          console.error('❌ Failed to load external content:', error);
         }
       }
     },
-  })
+  }, [isExternalDocument]);
 
-  // ✅ Y.js event listeners with safe access
-  useEffect(() => {
-    if (!ydoc || !editor || !roomName) return
-
-    try {
-      const ytext = getYText();
-      if (!ytext) {
-        console.warn('❌ Could not get Y.Text instance');
-        return;
-      }
-
-      const onYTextChange = (event) => {
-        if (process.env.NODE_ENV === "development") {
-          console.log("Y.Text changed:", event.delta.length, 'operations');
-        }
-      }
-
-      ytext.observe(onYTextChange)
-
-      return () => {
-        try {
-          ytext.unobserve(onYTextChange)
-        } catch (error) {
-          console.warn("Error unobserving Y.Text:", error)
-        }
-      }
-    } catch (error) {
-      console.warn("Y.js setup error:", error)
-    }
-  }, [ydoc, editor, roomName, getYText])
-
-  // ✅ UPDATED: Custom save function that handles both internal and external Y.js-first
+  // ✅ SIMPLIFIED: Save function
   const customSaveDocument = useCallback(async () => {
-    if (!ydoc || !window.electronAPI) return;
+    if (!editor || !window.electronAPI) return;
 
     try {
       if (isExternalDocument) {
-        // ✅ NEW: External document - get text from Y.js and save to original file
-        const ytext = getYText();
-        if (!ytext) {
-          console.error('❌ No Y.Text instance for external save');
-          return;
-        }
-
-        const currentContent = ytext.toString();
-        
-        // Get document metadata to find original path
-        const docResult = await window.electronAPI.documents.loadById(roomName);
+        const content = editor.getText();
+        const docResult = await loadDocument();
         if (docResult?.metadata?.originalPath) {
-          // Save plain text to original file location
           await window.electronAPI.documents.saveExternal(
             docResult.metadata.originalPath, 
-            currentContent
+            content
           );
-          console.log('✅ External document saved from Y.js state');
-        } else {
-          console.error('❌ No original path found for external document');
+          console.log('✅ External document saved');
         }
-        
       } else {
-        // ✅ EXISTING: Internal document - save Y.js state as before
-        const state = Array.from(Y.encodeStateAsUpdate(ydoc));
-        await window.electronAPI.documents.save(roomName, state, { title });
-        console.log('✅ Internal document saved with Y.js state');
+        // Internal Y.js save
+        if (ydoc) {
+          const state = Array.from(Y.encodeStateAsUpdate(ydoc));
+          await window.electronAPI.documents.save(roomName, state, { title });
+          console.log('✅ Internal document saved');
+        }
       }
-      
     } catch (error) {
       console.error('❌ Save failed:', error);
       throw error;
     }
-  }, [ydoc, roomName, title, isExternalDocument, getYText]);
+  }, [editor, ydoc, roomName, title, isExternalDocument, loadDocument]);
 
-  // ✅ Clean up Y.Text reference when document changes
+  // ✅ Reset on room change
   useEffect(() => {
-    ytextRef.current = null;
     isLoadedRef.current = false;
     setInitialContent(null);
     setIsExternalDocument(false);
   }, [roomName]);
 
-  // ✅ Cleanup on unmount to prevent memory leaks
-  useEffect(() => {
-    return () => {
-      ytextRef.current = null;
-    };
-  }, []);
-
   return {
     editor: initialContent ? editor : null,
     saveStatus,
-    saveDocument: customSaveDocument, // ✅ Use custom save logic
+    saveDocument: customSaveDocument,
     getYText,
-    isExternalDocument // ✅ Expose document type for debugging
+    isExternalDocument
   }
 }
