@@ -1,12 +1,10 @@
 // app/editor/[documentId]/hooks/useCollaboration.js
 "use client"
 import { useEditor } from "@tiptap/react"
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { createEditorExtensions, editorProps, editorCallbacks } from "../config/editorConfig"
 import { useDocumentPersistence } from "../../../hooks/useDocumentPersistence"
 import * as Y from 'yjs'
-import { useCallback } from "react"
-import { getSafeYText } from "@/utils/yjsUtils"
 
 export function useCollaboration(ydoc, provider, roomName, title = "Untitled Document") {
   console.log('🧩 useCollaboration initialized with room:', roomName);
@@ -15,34 +13,43 @@ export function useCollaboration(ydoc, provider, roomName, title = "Untitled Doc
   const { saveDocument, loadDocument, saveStatus } = useDocumentPersistence(ydoc, roomName, title);
   const isLoadedRef = useRef(false);
 
-  // ✅ Safe Y.Text getter
-  const getYText = useCallback(() => {
+  // ✅ Get the YXmlFragment used by Collaboration extension
+  const getYXmlFragment = useCallback(() => {
     if (!ydoc || !roomName) return null;
     const fieldName = `editor-${roomName}`;
-    return getSafeYText(ydoc, fieldName);
+    return ydoc.getXmlFragment(fieldName); // Use XmlFragment, not Text
   }, [ydoc, roomName]);
 
-  // ✅ SIMPLIFIED: Load content without Y.js complexity
+  // ✅ Enhanced: Load content and sync to Y.js for collaboration
   useEffect(() => {
     async function loadSavedContent() {
       if (!ydoc || isLoadedRef.current) return;
 
       try {
         console.log('📖 Loading document:', roomName);
-        const savedDoc = await loadDocument();
+        const savedDoc = await window.electronAPI.documents.loadById(roomName);
 
         if (savedDoc?.streamUrl) {
-          // External document - just load text for display
+          // ✅ External document - load text and convert to ProseMirror format
           console.log('📡 Loading external file from:', savedDoc.streamUrl);
           setIsExternalDocument(true);
+          
+          const response = await fetch(savedDoc.streamUrl);
+          const fileContent = await response.text();
+          console.log('📄 External file content length:', fileContent.length);
+
+          // ✅ FIXED: Don't insert into Y.js directly, let the editor handle it
+          // The editor will be created first, then we'll set content via TipTap
+          
         } else if (savedDoc?.state) {
-          // Internal document - apply Y.js state as before
-          console.log('📄 Loading internal document');
+          // ✅ Internal document - apply Y.js state as before
+          console.log('📄 Loading internal document with Y.js state');
           setIsExternalDocument(false);
           const state = new Uint8Array(savedDoc.state);
           Y.applyUpdate(ydoc, state);
+          console.log('📚 Internal document restored from Y.js state');
         } else {
-          console.log('📄 New document');
+          console.log('📄 New empty document');
           setIsExternalDocument(false);
         }
       } catch (error) {
@@ -54,63 +61,63 @@ export function useCollaboration(ydoc, provider, roomName, title = "Untitled Doc
     }
 
     loadSavedContent();
-  }, [ydoc, loadDocument, roomName]);
+  }, [ydoc, roomName]);
 
-  // ✅ SIMPLIFIED: Editor with basic content loading
+  // ✅ Editor with Y.js collaboration extensions
   const editor = useEditor({
     extensions: createEditorExtensions(ydoc, provider, roomName),
     immediatelyRender: false,
     editorProps,
     ...editorCallbacks,
     
-    // ✅ Load file content after editor is ready
+    // ✅ Load external content after editor is ready
     onCreate: async ({ editor }) => {
       if (isExternalDocument) {
         try {
-          const savedDoc = await loadDocument();
+          const savedDoc = await window.electronAPI.documents.loadById(roomName);
           if (savedDoc?.streamUrl) {
             const response = await fetch(savedDoc.streamUrl);
             const content = await response.text();
+            // ✅ Set content through TipTap, which will sync to Y.js automatically
             editor.commands.setContent(content);
-            console.log('✅ External file loaded into editor');
+            console.log('✅ External file loaded into collaborative editor');
           }
         } catch (error) {
           console.error('❌ Failed to load external content:', error);
         }
       }
     },
-  }, [isExternalDocument]);
+  }, [ydoc, provider, roomName, isExternalDocument]);
 
-  // ✅ SIMPLIFIED: Save function
+  // ✅ Enhanced save function - always saves from Y.js state
   const customSaveDocument = useCallback(async () => {
-    if (!editor || !window.electronAPI) return;
+    if (!ydoc || !window.electronAPI) return;
 
     try {
       if (isExternalDocument) {
-        const content = editor.getText();
-        const docResult = await loadDocument();
+        // ✅ External document - get current text from editor (includes all collaborative changes)
+        const currentContent = editor?.getText() || '';
+        const docResult = await window.electronAPI.documents.loadById(roomName);
         if (docResult?.metadata?.originalPath) {
           await window.electronAPI.documents.saveExternal(
             docResult.metadata.originalPath, 
-            content
+            currentContent
           );
-          console.log('✅ External document saved');
+          console.log('✅ External document saved with collaborative changes');
         }
       } else {
-        // Internal Y.js save
-        if (ydoc) {
-          const state = Array.from(Y.encodeStateAsUpdate(ydoc));
-          await window.electronAPI.documents.save(roomName, state, { title });
-          console.log('✅ Internal document saved');
-        }
+        // ✅ Internal document - save complete Y.js state (includes all peer changes)
+        const state = Array.from(Y.encodeStateAsUpdate(ydoc));
+        await window.electronAPI.documents.save(roomName, state, { title });
+        console.log('✅ Internal document saved with Y.js collaborative state');
       }
     } catch (error) {
       console.error('❌ Save failed:', error);
       throw error;
     }
-  }, [editor, ydoc, roomName, title, isExternalDocument, loadDocument]);
+  }, [ydoc, roomName, title, isExternalDocument, editor]);
 
-  // ✅ Reset on room change
+  // ✅ Reset collaboration state on room change
   useEffect(() => {
     isLoadedRef.current = false;
     setInitialContent(null);
@@ -121,7 +128,7 @@ export function useCollaboration(ydoc, provider, roomName, title = "Untitled Doc
     editor: initialContent ? editor : null,
     saveStatus,
     saveDocument: customSaveDocument,
-    getYText,
+    getYText: getYXmlFragment, // Return YXmlFragment for debugging
     isExternalDocument
   }
 }

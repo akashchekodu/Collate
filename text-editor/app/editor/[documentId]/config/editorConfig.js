@@ -1,22 +1,34 @@
 // app/editor/[documentId]/config/editorConfig.js
+
 import StarterKit from "@tiptap/starter-kit"
 import Collaboration from "@tiptap/extension-collaboration"
 import CollaborationCaret from "@tiptap/extension-collaboration-caret"
 import Placeholder from "@tiptap/extension-placeholder"
 
-export function createEditorExtensions(ydoc, provider, roomName, cursorsEnabled = true) {
+// ------------------------------------------------------
+// 1) Collaborative extensions (Y.js enabled)
+// ------------------------------------------------------
+export function createEditorExtensions(
+  ydoc,
+  provider,
+  roomName,
+  cursorsEnabled = true
+) {
   if (!ydoc) {
-    console.warn('⚠️ No Y.Doc provided to createEditorExtensions');
-    return [StarterKit];
+    console.warn("⚠️ No Y.Doc provided to createEditorExtensions")
+    return [
+      StarterKit.configure({
+        history: false,
+      }),
+    ]
   }
 
-  const fieldName = `editor-${roomName}`;
-  console.log('📝 TipTap using field name:', fieldName);
+  const fieldName = `editor-${roomName}`
+  console.log("📝 TipTap using field name:", fieldName)
 
   const extensions = [
     StarterKit.configure({
-      history: false, // ✅ Critical: Disable for collaboration
-      // Ensure all formatting is enabled
+      history: false, // Disable built-in history when using CRDT
       bold: {},
       italic: {},
       strike: {},
@@ -29,37 +41,62 @@ export function createEditorExtensions(ydoc, provider, roomName, cursorsEnabled 
       heading: { levels: [1, 2, 3] },
       paragraph: {},
     }),
-    
-    // ✅ Critical: Proper Collaboration setup
     Collaboration.configure({
       document: ydoc,
-      field: fieldName, // Use exact same field name
+      field: fieldName,
     }),
-    
     Placeholder.configure({
       placeholder: "Start writing — changes are shared in real time",
     }),
   ]
 
-  // Add collaboration cursors if enabled
-  if (cursorsEnabled && provider && provider.connected) {
+  if (cursorsEnabled && provider?.connected) {
     extensions.push(
       CollaborationCaret.configure({
         provider,
         render: (user) => {
           const cursor = document.createElement("span")
           cursor.classList.add("collaboration-cursor__caret")
-          cursor.setAttribute("style", `border-color: ${user.color || "#000"};`)
+          cursor.setAttribute("style", `border-color:${user.color};`)
           return cursor
         },
-      }),
+      })
     )
   }
 
-  console.log('📋 Created extensions:', extensions.length);
+  console.log("📋 Created extensions:", extensions.length)
   return extensions
 }
 
+// ------------------------------------------------------
+// 2) Solo extensions (no Y.js)
+// ------------------------------------------------------
+export function createSoloEditorExtensions() {
+  return [
+    StarterKit.configure({
+      history: true, // Enable built-in history in solo mode
+      bold: {},
+      italic: {},
+      strike: {},
+      code: {},
+      bulletList: {},
+      orderedList: {},
+      listItem: {},
+      blockquote: {},
+      codeBlock: {},
+      heading: { levels: [1, 2, 3] },
+      paragraph: {},
+    }),
+    Placeholder.configure({
+      placeholder: "Start writing — solo mode",
+    }),
+    // No Collaboration or CollaborationCaret here
+  ]
+}
+
+// ------------------------------------------------------
+// 3) Shared editor props & callbacks
+// ------------------------------------------------------
 export const editorProps = {
   attributes: {
     class: "prose-editor-content",
@@ -69,27 +106,23 @@ export const editorProps = {
 
 export const editorCallbacks = {
   onCreate: ({ editor }) => {
-    console.log("✅ TipTap editor created");
-    
-    // ✅ Debug: Check initial content sync
+    console.log("✅ TipTap editor created")
     setTimeout(() => {
-      const content = editor.getText();
-      console.log('📝 Initial editor content length:', content.length);
-    }, 100);
+      const content = editor.getText()
+      console.log("📝 Initial content length:", content.length)
+    }, 100)
   },
-  
+
   onUpdate: ({ editor, transaction }) => {
     if (transaction.docChanged) {
-      console.log("📝 TipTap content updated");
-      
-      // ✅ Debug: Log content changes
-      const content = editor.getText();
-      console.log('📊 Updated content length:', content.length);
-      console.log('📄 Content preview:', content.slice(0, 50));
+      console.log("📝 TipTap content updated")
+      const content = editor.getText()
+      console.log("📊 Updated length:", content.length)
+      console.log("📄 Preview:", content.slice(0, 50))
     }
   },
-  
+
   onDestroy: () => {
-    console.log("❌ TipTap editor destroyed");
+    console.log("❌ TipTap editor destroyed")
   },
 }
