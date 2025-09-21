@@ -2,16 +2,21 @@
 const { app } = require('electron');
 const fs = require('fs').promises;
 const path = require('path');
+const os = require('os');
 const Y = require('yjs');
+
+const dataHome = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+
 
 class DocumentStorage {
   constructor() {
     // Use custom path instead of app.getPath('userData')
-    const customBasePath = 'D:/Collite';
+    const customBasePath = path.join(dataHome, 'Collite');
     
     this.documentsPath = path.join(customBasePath, 'documents');
     this.indexPath = path.join(customBasePath, 'index.json');
     this.settingsPath = path.join(customBasePath, 'settings.json');
+    this.currentFolderPath = null;
     this.init();
   }
 
@@ -44,6 +49,13 @@ class DocumentStorage {
     } catch (error) {
       console.error('❌ Failed to initialize document storage:', error);
     }
+  }
+ setCurrentFolder(folderPath) {
+    this.currentFolderPath = folderPath;
+    console.log('📁 Current folder set to:', folderPath);
+  }
+    getCurrentFolder() {
+    return this.currentFolderPath;
   }
 
   // Generate unique document ID
@@ -239,22 +251,151 @@ class DocumentStorage {
     }
   }
 
-  // Get all documents list
   async getAllDocuments() {
     try {
-      const indexData = await fs.readFile(this.indexPath, 'utf-8');
-      const index = JSON.parse(indexData);
+      // If no current folder is set, use Collite internal storage
+      if (!this.currentFolderPath) {
+        console.log('📋 Loading from Collite storage...');
+        const indexData = await fs.readFile(this.indexPath, 'utf-8');
+        const index = JSON.parse(indexData);
+        
+        const documents = Object.values(index)
+          .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+        console.log('📋 Retrieved Collite documents, count:', documents.length);
+        return documents;
+      }
+
+      // ✅ NEW: Load documents from browsed folder
+      console.log('📁 Loading documents from browsed folder:', this.currentFolderPath);
       
-      // Sort by updated date (most recent first)
-      const documents = Object.values(index)
-        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+      const files = await fs.readdir(this.currentFolderPath);
+      const textFiles = files.filter(file => {
+        const ext = path.extname(file).toLowerCase();
+        return ['.txt', '.md', '.markdown', '.text'].includes(ext);
+      });
+
+      console.log('📄 Found text files:', textFiles.length);
+
+      const documents = [];
+      for (const fileName of textFiles) {
+        const filePath = path.join(this.currentFolderPath, fileName);
+        
+        try {
+          const stats = await fs.stat(filePath);
+          const content = await fs.readFile(filePath, 'utf-8');
+          
+          // Calculate basic statistics
+          const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+          const characters = content.length;
+          const lines = content.split('\n').length;
+
+          documents.push({
+            id: filePath, // Use file path as ID for browsed files
+            title: path.basename(fileName, path.extname(fileName)),
+            createdAt: stats.birthtime.toISOString(),
+            updatedAt: stats.mtime.toISOString(),
+            version: 1,
+            statistics: { words, characters, lines },
+            tags: ['external'],
+            favorite: false,
+            isExternal: true, // Mark as external file
+            filePath: filePath // Store original path
+          });
+        } catch (error) {
+          console.warn('⚠️ Failed to read file:', fileName, error.message);
+        }
+      }
+
+      // Sort by modification date
+      documents.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
       
+      console.log('📁 Retrieved browsed folder documents, count:', documents.length);
       return documents;
+      
     } catch (error) {
       console.error('❌ Failed to get documents:', error);
       return [];
     }
   }
+
+  // ✅ NEW: Load external file as document
+  async loadExternalDocument(filePath) {
+    try {
+      console.log('📖 Loading external document:', filePath);
+      
+      const content = await fs.readFile(filePath, 'utf-8');
+      const stats = await fs.stat(filePath);
+      const fileName = path.basename(filePath, path.extname(filePath));
+
+      // Create a temporary Y.js document with the content
+      const documentId = filePath;  // use absolute path as the ID
+      const ydoc = new Y.Doc();
+      const fieldName = `editor-${documentId}`;
+      const ytext = ydoc.getText(fieldName);
+      ytext.insert(0, content);
+      
+      const state = Array.from(Y.encodeStateAsUpdate(ydoc));
+      
+      const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+      const characters = content.length;
+      const lines = content.split('\n').length;
+
+      ytext.insert(0, content);
+           
+      console.log('📖 External document loaded:', filePath);
+      return {
+        state,
+        metadata: {
+          id: documentId,
+          title: fileName,
+          createdAt: stats.birthtime.toISOString(),
+          updatedAt: stats.mtime.toISOString(),
+          version: 1,
+          statistics: { words, characters, lines }, // use defined vars
+          tags: ['external'],
+          favorite: false,
+          isExternal: true,
+          filePath
+        }
+      };
+    } catch (error) {
+      console.error('❌ Failed to load external document:', error);
+      return null;
+    }
+  }
+
+  // ✅ NEW: Save external document back to its original location
+  async saveExternalDocument(filePath, ydocState) {
+    try {
+      console.log('💾 Saving external document:', filePath);
+      
+      // Reconstruct content from Y.js state
+      let content = '';
+      if (ydocState && ydocState.length > 0) {
+        const tempDoc = new Y.Doc();
+        const state = new Uint8Array(ydocState);
+        Y.applyUpdate(tempDoc, state);
+        
+        const documentId = `external-${path.basename(filePath)}`;
+        const fieldName = `editor-${documentId}`;
+        
+        if (tempDoc.share.has(fieldName)) {
+          const ytext = tempDoc.share.get(fieldName);
+          content = ytext.toString();
+        }
+      }
+
+      // Save back to original file
+      await fs.writeFile(filePath, content, 'utf-8');
+      console.log('✅ External document saved:', filePath);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Failed to save external document:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
 
   // Get recent documents
   async getRecentDocuments(limit = 10) {

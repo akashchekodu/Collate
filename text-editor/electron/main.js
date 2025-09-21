@@ -1,13 +1,17 @@
 // electron/main.js - FIXED: Import app before using it
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const os = require('os');
 const path = require('path');
 const fs = require('fs').promises;
 const Y = require('yjs');
+
 const DocumentStorage = require('./services/DocumentStorage');
 const CollaborationService = require('./services/CollaborationService'); // ✅ ADD: Import collaboration service
 
+const dataHome = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+
 // ✅ FIXED: Set custom userData path AFTER importing app
-app.setPath('userData', 'D:/Collite');
+app.setPath('userData', path.join(dataHome, 'Collite'));
 
 // Register custom protocol handler
 app.setAsDefaultProtocolClient('collate');
@@ -227,20 +231,21 @@ app.whenReady().then(async () => {
       throw error;
     }
   });
-
-  ipcMain.handle('documents:load', async (event, documentId) => {
+// ✅ MODIFIED: Load document (handle both internal and external)
+  ipcMain.handle('documents:load', async (event, idOrPath) => {
+    if (await fs.access(idOrPath).then(() => true).catch(() => false)) {
+      return await documentStorage.loadExternalDocument(idOrPath);
+    } else {
+      return await documentStorage.loadDocument(idOrPath);
+    }
+  });
+  // ✅ NEW: Save external document
+  ipcMain.handle('documents:saveExternal', async (event, filePath, state) => {
     try {
-      const result = await documentStorage.loadDocument(documentId);
-      if (result) {
-        return {
-          state: result.state,
-          metadata: result.metadata
-        };
-      }
-      return null;
+      return await documentStorage.saveExternalDocument(filePath, state);
     } catch (error) {
-      console.error('❌ Error loading document:', error);
-      return null;
+      console.error('❌ Error saving external document:', error);
+      return { success: false, error: error.message };
     }
   });
 
@@ -343,25 +348,25 @@ app.whenReady().then(async () => {
     }
   });
   // Add this IPC handler for development testing
-ipcMain.handle('collaboration:test-dev', async (event, params) => {
-  console.log('🧪 DEV: Testing collaboration with params:', params);
-  
-  try {
-    if (collaborationService) {
-      const result = await collaborationService.startCollaboration(params.documentId, {
-        room: params.room, 
-        token: params.token
-      });
-      
-      console.log('🎯 DEV: Collaboration result:', result);
-      return result;
+  ipcMain.handle('collaboration:test-dev', async (event, params) => {
+    console.log('🧪 DEV: Testing collaboration with params:', params);
+    
+    try {
+      if (collaborationService) {
+        const result = await collaborationService.startCollaboration(params.documentId, {
+          room: params.room, 
+          token: params.token
+        });
+        
+        console.log('🎯 DEV: Collaboration result:', result);
+        return result;
+      }
+      return { success: false, error: 'No collaboration service' };
+    } catch (error) {
+      console.error('❌ DEV: Collaboration test failed:', error);
+      return { success: false, error: error.message };
     }
-    return { success: false, error: 'No collaboration service' };
-  } catch (error) {
-    console.error('❌ DEV: Collaboration test failed:', error);
-    return { success: false, error: error.message };
-  }
-});
+  });
 
 
   ipcMain.handle('documents:duplicate', async (event, documentId, newTitle) => {
@@ -425,6 +430,190 @@ ipcMain.handle('collaboration:test-dev', async (event, params) => {
     } catch (error) {
       console.error('❌ Error exporting document:', error);
       return { success: false, error: error.message };
+    }
+  });
+
+    // ✅ NEW: Open file dialog handler
+  ipcMain.handle('documents:openFile', async (event) => {
+    try {
+      console.log('📁 Opening file dialog...');
+      
+      const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openFile'],
+        filters: [
+          { name: 'Text Documents', extensions: ['txt', 'md', 'markdown', 'text'] },
+          { name: 'All Files', extensions: ['*'] }
+        ],
+        title: 'Open Document'
+      });
+      
+      console.log('📁 File dialog result:', result);
+      
+      if (!result.canceled && result.filePaths.length > 0) {
+        const filePath = result.filePaths[0];
+        const folderPath = path.dirname(filePath);
+        
+        // Set the current folder to the file's directory
+        documentStorage.setCurrentFolder(folderPath);
+        console.log('📁 Current folder set to:', folderPath);
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('❌ Error opening file dialog:', error);
+      return { canceled: true, error: error.message };
+    }
+  });
+
+
+  // ✅ NEW: Import file handler
+  ipcMain.handle('documents:importFile', async (event, filePath) => {
+    try {
+      console.log('📄 Importing file:', filePath);
+      
+      // Check if file exists
+      const exists = await fs.access(filePath).then(() => true).catch(() => false);
+      if (!exists) {
+        throw new Error('File does not exist');
+      }
+      
+      // Read file content
+      const content = await fs.readFile(filePath, 'utf-8');
+      console.log('📄 File content length:', content.length);
+      
+      // Extract filename without extension for title
+      const fileName = path.basename(filePath, path.extname(filePath));
+      const fileExtension = path.extname(filePath);
+      
+      // Generate new document ID
+      const documentId = documentStorage.generateDocumentId();
+      
+      // Create Y.js document with the imported content
+      const ydoc = new Y.Doc();
+      const fieldName = `editor-${documentId}`;
+      const ytext = ydoc.getText(fieldName);
+      
+      // Insert content into Y.js document
+      ytext.insert(0, content);
+      
+      // Encode the state
+      const state = Y.encodeStateAsUpdate(ydoc);
+      
+      // Prepare metadata
+      const metadata = {
+        title: fileName || 'Imported Document',
+        createdAt: new Date().toISOString(),
+        version: 0,
+        imported: true,
+        originalPath: filePath,
+        originalExtension: fileExtension,
+        tags: ['imported']
+      };
+      
+      // Save the document
+      const savedDoc = await documentStorage.saveDocument(documentId, Array.from(state), metadata);
+      console.log('✅ Document imported successfully:', savedDoc.id);
+      
+      return {
+        id: documentId,
+        title: savedDoc.title,
+        createdAt: savedDoc.createdAt,
+        updatedAt: savedDoc.updatedAt,
+        version: savedDoc.version,
+        imported: true,
+        originalPath: filePath
+      };
+      
+    } catch (error) {
+      console.error('❌ Error importing file:', error);
+      throw error;
+    }
+  });
+
+  // ✅ NEW: Update document title handler (if not already present)
+  ipcMain.handle('documents:updateTitle', async (event, documentId, newTitle) => {
+    try {
+      console.log('📝 Updating document title:', documentId, '->', newTitle);
+      
+      const result = await documentStorage.updateDocumentTitle(documentId, newTitle);
+      
+      if (result.success) {
+        console.log('✅ Document title updated successfully');
+        return { success: true, title: result.title };
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      console.error('❌ Error updating document title:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ✅ NEW: Get recent documents handler (if you want a separate endpoint)
+  ipcMain.handle('documents:getRecent', async (event, limit = 10) => {
+    try {
+      console.log('📚 Getting recent documents, limit:', limit);
+      
+      const recentDocs = await documentStorage.getRecentDocuments(limit);
+      console.log('✅ Retrieved recent documents:', recentDocs.length);
+      
+      return recentDocs;
+    } catch (error) {
+      console.error('❌ Error getting recent documents:', error);
+      return [];
+    }
+  });
+
+  // ✅ NEW: Search documents handler
+  ipcMain.handle('documents:search', async (event, query) => {
+    try {
+      console.log('🔍 Searching documents for:', query);
+      
+      const results = await documentStorage.searchDocuments(query);
+      console.log('✅ Search completed, found:', results.length, 'documents');
+      
+      return results;
+    } catch (error) {
+      console.error('❌ Error searching documents:', error);
+      return [];
+    }
+  });
+
+  // ✅ NEW: Get document statistics
+  ipcMain.handle('documents:getStats', async (event) => {
+    try {
+      console.log('📊 Getting document statistics');
+      
+      const allDocs = await documentStorage.getAllDocuments();
+      
+      const stats = {
+        totalDocuments: allDocs.length,
+        totalWords: allDocs.reduce((sum, doc) => sum + (doc.statistics?.words || 0), 0),
+        totalCharacters: allDocs.reduce((sum, doc) => sum + (doc.statistics?.characters || 0), 0),
+        averageWords: 0,
+        oldestDocument: null,
+        newestDocument: null,
+        mostRecentlyUpdated: null
+      };
+      
+      if (allDocs.length > 0) {
+        stats.averageWords = Math.round(stats.totalWords / allDocs.length);
+        
+        // Sort by creation date
+        const sortedByCreation = [...allDocs].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+        stats.oldestDocument = sortedByCreation[0];
+        stats.newestDocument = sortedByCreation[sortedByCreation.length - 1];
+        
+        // Sort by update date
+        const sortedByUpdate = [...allDocs].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+        stats.mostRecentlyUpdated = sortedByUpdate[0];
+      }
+      
+      console.log('✅ Document statistics calculated:', stats);
+      return stats;
+    } catch (error) {
+      console.error('❌ Error getting document statistics:', error);
+      return null;
     }
   });
 

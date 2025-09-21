@@ -322,100 +322,97 @@ const forceContentSync = () => {
   return (
     <>
       <EditorStyles />
-      <div className="h-full flex flex-col bg-gray-50">
-        <div className="flex-1 mx-4 my-2 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden">
-          <CollaborationStatus
-            peerCount={peerCount}
-            activePeers={activePeers}
-            connectionStatus={connectionStatus}
-            ydoc={ydoc}
-            provider={provider}
-            roomName={roomName}
-          />
+      <div className="h-full flex flex-col bg-white">
+        <CollaborationStatus
+          peerCount={peerCount}
+          activePeers={activePeers}
+          connectionStatus={connectionStatus}
+          ydoc={ydoc}
+          provider={provider}
+          roomName={roomName}
+        />
 
-          {/* Enhanced toolbar with save indicator and debug buttons */}
-          <div className="flex items-center justify-between border-b bg-muted/20">
-            <div className="flex items-center gap-2">
-              <EditorToolbar editor={editor} />
-              
-              {/* ✅ Debug buttons - only in development */}
-              {process.env.NODE_ENV === 'development' && editor && ydoc && (
-                
-                <div className="flex gap-1 ml-4 border-l pl-4">
-                  <button
-                    onClick={debugTipTapContent}
-                    className="px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
-                    title="Debug TipTap content structure"
-                  >
-                    🔬 TipTap Debug
-                  </button>
-                  <button
-                    onClick={debugYjsState}
-                    className="px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
-                    title="Debug Y.js state and reconstruction"
-                  >
-                    🔬 Y.js Debug
-                  </button>
-                  <button
-                    onClick={debugEditorContent}
-                    className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors"
-                    title="Debug content sync between TipTap and Y.js"
-                  >
-                    🔍 Debug
-                  </button>
-                  <button
-                    onClick={forceContentSync}
-                    className="px-2 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 transition-colors"
-                    title="Force sync editor content to Y.js"
-                  >
-                    🔧 Sync
-                  </button>
-                  <button
-                    onClick={testSaveOperation}
-                    className="px-2 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors"
-                    title="Test save operation with current content"
-                  >
-                    💾 Test Save
-                  </button>
-                </div>
-              )}
-            </div>
+        {/* Enhanced toolbar with save indicator and debug buttons */}
+        <div className="flex items-center justify-between border-b bg-muted/20">
+          <div className="flex items-center gap-2">
+            <EditorToolbar editor={editor} />
             
-            <div className="px-4">
-              <SaveIndicator saveStatus={saveStatus} />
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-auto">
-            {editor ? (
-              <EditorContent
-                editor={editor}
-                className="h-full w-full p-6 [&_.ProseMirror]:min-h-full [&_.ProseMirror]:outline-none [&_.ProseMirror]:border-none"
-                suppressContentEditableWarning={true}
-              />
-            ) : (
-              <div className="flex items-center justify-center h-full">
-                <div className="flex flex-col items-center gap-4">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                  <p className="text-muted-foreground">Loading document...</p>
-                </div>
+            {/* Your existing debug buttons remain the same... */}
+            {process.env.NODE_ENV === 'development' && editor && ydoc && (
+              <div className="flex gap-1 ml-4 border-l pl-4">
+                <button
+                  onClick={debugTipTapContent}
+                  className="px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
+                  title="Debug TipTap content structure"
+                >
+                  🔬 TipTap Debug
+                </button>
+                <button
+                  onClick={debugYjsState}
+                  className="px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
+                  title="Debug Y.js state and reconstruction"
+                >
+                  🔬 Y.js Debug
+                </button>
+                <button
+                  onClick={debugEditorContent}
+                  className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors"
+                  title="Debug content sync between TipTap and Y.js"
+                >
+                  🔍 Debug
+                </button>
+                <button
+                  onClick={forceContentSync}
+                  className="px-2 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 transition-colors"
+                  title="Force sync editor content to Y.js"
+                >
+                  🔧 Sync
+                </button>
+                <button
+                  onClick={testSaveOperation}
+                  className="px-2 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors"
+                  title="Test save operation with current content"
+                >
+                  💾 Test Save
+                </button>
               </div>
             )}
           </div>
+          
+          <div className="px-4">
+            <SaveIndicator saveStatus={saveStatus} />
+          </div>
+        </div>
 
-          {/* ✅ Development info panel */}
-          {process.env.NODE_ENV === 'development' && (
-            <div className="border-t bg-gray-50 p-2 text-xs text-gray-600">
-              <div className="flex items-center justify-between">
-                <span>Document ID: <code>{documentId}</code></span>
-                <span>Field: <code>editor-{documentId}</code></span>
-                <span>Save Status: <code>{saveStatus}</code></span>
-                <span>Y.js Ready: <code>{!!ydoc}</code></span>
-                <span>Editor Ready: <code>{!!editor}</code></span>
+        <div className="flex-1 overflow-auto">
+          {editor ? (
+            <EditorContent
+              editor={editor}
+              className="h-full w-full p-6 [&_.ProseMirror]:min-h-full [&_.ProseMirror]:outline-none [&_.ProseMirror]:border-none"
+              suppressContentEditableWarning={true}
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <div className="flex flex-col items-center gap-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                <p className="text-muted-foreground">Loading document...</p>
               </div>
             </div>
           )}
         </div>
+
+        {/* Development info panel */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="border-t bg-gray-50 p-2 text-xs text-gray-600">
+            <div className="flex items-center justify-between">
+              <span>Document ID: <code>{documentId}</code></span>
+              <span>Field: <code>editor-{documentId}</code></span>
+              <span>Save Status: <code>{saveStatus}</code></span>
+              <span>Y.js Ready: <code>{!!ydoc}</code></span>
+              <span>Editor Ready: <code>{!!editor}</code></span>
+            </div>
+          </div>
+        )}
       </div>
     </>
   )
@@ -425,7 +422,7 @@ export default function EditorContainer({ documentId, title }) {
   return (
     <ClientOnly
       fallback={
-        <div className="min-h-[90vh] flex flex-col">
+        <div className="h-full flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/20">
             <div className="h-4 w-24 bg-muted animate-pulse rounded" />
             <div className="h-4 w-16 bg-muted animate-pulse rounded" />

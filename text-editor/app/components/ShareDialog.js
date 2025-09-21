@@ -46,7 +46,6 @@ export default function ShareDialog({ documentId, documentTitle, isOpen, onClose
   const [collaborationData, setCollaborationData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [copiedLink, setCopiedLink] = useState(null);
-
   useEffect(() => {
     if (isOpen && documentId) {
       loadCollaborationData();
@@ -113,17 +112,36 @@ export default function ShareDialog({ documentId, documentTitle, isOpen, onClose
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-md mx-4 max-h-[80vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-6 border-b">
-          <h2 className="text-lg font-semibold">Share Document</h2>
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            <X size={16} />
-          </Button>
-        </div>
+  <div 
+    className="fixed z-50"
+    style={{
+      top: 0,
+      left: 0,
+      width: '100vw',
+      height: '100vh',
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '16px',
+      boxSizing: 'border-box'
+    }}
+  >
+    <div 
+      className="bg-white rounded-lg shadow-lg w-full max-w-md overflow-hidden flex flex-col"
+      style={{
+        maxHeight: '90vh'
+      }}
+    >
+      <div className="flex items-center justify-between p-6 border-b flex-shrink-0">
+        <h2 className="text-lg font-semibold">Share Document</h2>
+        <Button variant="ghost" size="sm" onClick={onClose}>
+          <X size={16} />
+        </Button>
+      </div>
 
-        <div className="p-6 space-y-6">
-          {isLoading ? (
+      <div className="p-6 space-y-6 overflow-y-auto flex-1">
+        {isLoading ? (
             <div className="text-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
               <p className="mt-2 text-gray-600">Setting up collaboration...</p>
