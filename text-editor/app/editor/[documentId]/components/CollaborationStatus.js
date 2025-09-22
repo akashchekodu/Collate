@@ -2,13 +2,13 @@
 import React, { useCallback } from "react";
 import { Users, Wifi, WifiOff, Eye, Edit, Bug, Type, Clock } from "lucide-react";
 
-export default function CollaborationStatus({ 
-  peerCount, 
-  activePeers, 
-  connectionStatus, 
-  ydoc, 
-  provider, 
-  roomName 
+export default function CollaborationStatus({
+  peerCount,
+  activePeers,
+  connectionStatus,
+  ydoc,
+  provider,
+  roomName
 }) {
   const debugYjsState = useCallback(() => {
     if (ydoc && provider) {
@@ -17,7 +17,7 @@ export default function CollaborationStatus({
         const ytext = ydoc.getText(fieldName);
         const awareness = provider.awareness;
         const localUser = awareness.getLocalState()?.user;
-        
+
         console.log('🔍 Y.Doc Debug:', {
           clientID: ydoc.clientID,
           fieldName,
@@ -72,7 +72,7 @@ export default function CollaborationStatus({
           {getStatusIcon()}
           <span className="capitalize font-medium">{connectionStatus}</span>
         </div>
-        
+
         <div className="flex items-center gap-2 text-sm text-gray-400">
           <Users size={14} />
           <span className="font-medium">
@@ -97,7 +97,7 @@ export default function CollaborationStatus({
             {activePeers.slice(0, 5).map((peer, index) => {
               const isRecentlyActive = peer.lastSeen && Date.now() - peer.lastSeen < 10000;
               const isTyping = peer.isTyping || (peer.lastSeen && Date.now() - peer.lastSeen < 3000);
-              
+
               return (
                 <div
                   key={peer.clientId || index}
@@ -107,7 +107,7 @@ export default function CollaborationStatus({
                 >
                   {/* ✅ ENHANCED: Show first letter or emoji */}
                   {peer.name ? peer.name.charAt(0).toUpperCase() : '👤'}
-                  
+
                   {/* ✅ ENHANCED: Activity indicator */}
                   <div className="absolute -bottom-1 -right-1">
                     {isTyping ? (
@@ -126,7 +126,7 @@ export default function CollaborationStatus({
               );
             })}
             {activePeers.length > 5 && (
-              <div 
+              <div
                 className="w-8 h-8 rounded-full border-2 border-gray-800 bg-gray-600 flex items-center justify-center text-xs text-white font-medium"
                 title={`${activePeers.length - 5} more collaborators`}
               >
@@ -142,7 +142,7 @@ export default function CollaborationStatus({
         <div className="flex items-center gap-2 text-xs text-green-400">
           <Type size={12} className="animate-pulse" />
           <span>
-            {typingPeers.length === 1 
+            {typingPeers.length === 1
               ? `${typingPeers[0].name || 'Someone'} is typing...`
               : `${typingPeers.length} people are typing...`
             }
@@ -159,10 +159,10 @@ export default function CollaborationStatus({
             <span>Live</span>
           </div>
         )}
-        
+
         {/* ✅ DEBUG: Development tools */}
         {process.env.NODE_ENV === 'development' && (
-          <button 
+          <button
             onClick={debugYjsState}
             className="flex items-center gap-1 px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-400 hover:text-white transition-colors"
             title="Debug Y.js collaboration state"

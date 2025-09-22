@@ -1,8 +1,6 @@
 "use client"
 import { useEffect, useCallback, useState } from "react"
 import { EditorContent } from "@tiptap/react"
-import { useYjsRoom } from "./hooks/useYjsRoom"
-import { useAwareness } from "./hooks/useAwareness"
 import { useCollaboration } from "./hooks/useCollaboration"
 import EditorToolbar from "./EditorToolbar"
 import CollaborationStatus from "./components/CollaborationStatus"
@@ -10,23 +8,24 @@ import EditorStyles from "./components/EditorStyles"
 import SaveIndicator from "./components/SaveIndicator"
 import ClientOnly from "./components/ClientOnly"
 
-function EditorContainerContent({ documentId, title = "Untitled Document" }) {
-  // ✅ SEAMLESS SWITCHING: Get all switching functions
-  const { 
-    ydoc, 
-    provider, 
-    isCollaborationMode, 
-    collaborationToken, 
-    standardFieldName,
-    isSwitching,
-    enableCollaboration,
-    disableCollaboration 
-  } = useYjsRoom(documentId, { documentId, documentTitle: title });
-
+function EditorContainerContent({
+  documentId,
+  title = "Untitled Document",
+  // ✅ RECEIVE COLLABORATION STATE FROM PAGE
+  ydoc,
+  provider,
+  isCollaborationMode,
+  collaborationToken,
+  standardFieldName,
+  isSwitching,
+  peerCount,
+  connectionStatus,
+  activePeers
+}) {
+  // ✅ ONLY USE COLLABORATION HOOK FOR EDITOR
   const { editor, saveStatus, saveDocument, editorError, fieldName } = useCollaboration(ydoc, provider, documentId, title, standardFieldName)
-  const { peerCount, connectionStatus, activePeers } = useAwareness(provider, documentId)
 
-  // ✅ PROPER ERROR STATE MANAGEMENT
+  // ✅ ERROR STATE MANAGEMENT
   const [criticalError, setCriticalError] = useState(false)
   const [warningCount, setWarningCount] = useState(0)
   const [lastWarningTime, setLastWarningTime] = useState(0)
@@ -51,18 +50,18 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
     const classifyAndHandleError = (event) => {
       const error = event.error || event.reason;
       const errorMessage = error?.message || error?.toString() || '';
-      
+
       // ✅ CATEGORY 1: CRDT Normal Operations (NOT errors)
       const crdtNormalEvents = [
         'Unexpected case',           // Normal TipTap collaboration conflict resolution
         'Transform failed',         // Normal Y.js transform conflicts
         'position mapping',         // Normal position adjustments during collaboration
       ];
-      
-      const isNormalCRDTEvent = crdtNormalEvents.some(pattern => 
+
+      const isNormalCRDTEvent = crdtNormalEvents.some(pattern =>
         errorMessage.includes(pattern)
       );
-      
+
       if (isNormalCRDTEvent) {
         // ✅ SILENT: These are normal CRDT operations, not errors
         event.preventDefault?.();
@@ -77,33 +76,33 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
         'position out of range',
         'collaboration conflict'
       ];
-      
-      const isCollaborationWarning = collaborationWarnings.some(pattern => 
+
+      const isCollaborationWarning = collaborationWarnings.some(pattern =>
         errorMessage.includes(pattern)
       );
-      
+
       if (isCollaborationWarning) {
         const now = Date.now();
         const timeSinceLastWarning = now - lastWarningTime;
-        
+
         // ✅ RATE LIMITING: Only count frequent warnings as concerning
         if (timeSinceLastWarning < 1000) { // Less than 1 second apart
           setWarningCount(prev => {
             const newCount = prev + 1;
-            
+
             // ✅ THRESHOLD: Only show concern after many rapid warnings
             if (newCount >= 20) { // Much higher threshold
               console.warn('⚠️ High frequency collaboration warnings detected');
               // Don't break the editor, just log
             }
-            
+
             return newCount;
           });
         } else {
           // ✅ RESET: Reset counter if warnings aren't frequent
           setWarningCount(1);
         }
-        
+
         setLastWarningTime(now);
         event.preventDefault?.();
         return true;
@@ -117,11 +116,11 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
         'Document corrupted',
         'Unable to sync'
       ];
-      
-      const isCriticalError = criticalErrors.some(pattern => 
+
+      const isCriticalError = criticalErrors.some(pattern =>
         errorMessage.includes(pattern)
       );
-      
+
       if (isCriticalError) {
         console.error('🚨 Critical collaboration error:', errorMessage);
         setCriticalError(true);
@@ -135,7 +134,7 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
     // ✅ CAPTURE PHASE: Intercept early to prevent UI disruption
     window.addEventListener('error', classifyAndHandleError, true);
     window.addEventListener('unhandledrejection', classifyAndHandleError, true);
-    
+
     return () => {
       window.removeEventListener('error', classifyAndHandleError, true);
       window.removeEventListener('unhandledrejection', classifyAndHandleError, true);
@@ -165,12 +164,12 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
   // ✅ ENHANCED RESET: More intelligent reset
   const resetEditor = useCallback(() => {
     console.log('🔄 Intelligent editor reset');
-    
+
     // ✅ SOFT RESET: Try to recover without full reload
     setCriticalError(false);
     setWarningCount(0);
     setLastWarningTime(0);
-    
+
     // ✅ ONLY RELOAD: If we have a real critical error
     if (editorError || !editor) {
       setTimeout(() => {
@@ -178,59 +177,6 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
       }, 1000);
     }
   }, [editorError, editor]);
-
-  // ✅ SEAMLESS SHARE FUNCTION: Enable collaboration mode
-  const handleShareDocument = useCallback(async () => {
-    if (isSwitching) {
-      alert('Please wait, switching to collaboration mode...');
-      return;
-    }
-
-    try {
-      // ✅ SHOW: User that we're enabling collaboration
-      console.log('🔄 Starting seamless collaboration switch for sharing');
-      
-      const { collaborationService } = await import('../../services/collabService')
-      const linkData = await collaborationService.generateCollaborationLink(documentId)
-      
-      if (linkData?.url && linkData?.token) {
-        // ✅ SEAMLESS: Enable collaboration mode with the generated token
-        console.log('🔄 Enabling collaboration mode for sharing');
-        await enableCollaboration(linkData.token);
-        
-        // ✅ WAIT: Brief moment for mode switch to complete
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // ✅ COPY: Link to clipboard
-        await navigator.clipboard.writeText(linkData.url)
-        
-        alert(`✅ Collaboration enabled!\n\nLink copied to clipboard:\n${linkData.url}\n\n🔄 Your document is now in collaboration mode - others can join immediately!\n\n👥 You'll see collaborators appear above when they join.`)
-      } else {
-        alert('Failed to generate collaboration link.')
-      }
-    } catch (error) {
-      console.error('Share error:', error)
-      alert(`Error enabling collaboration: ${error.message}`)
-    }
-  }, [documentId, enableCollaboration, isSwitching]);
-
-  // ✅ NEW: Disable collaboration function
-  const handleDisableCollaboration = useCallback(async () => {
-    if (isSwitching) {
-      alert('Please wait, mode switching in progress...');
-      return;
-    }
-
-    try {
-      console.log('🔄 Disabling collaboration mode');
-      await disableCollaboration();
-      
-      alert('📝 Switched to solo mode.\n\nYour document is now private and no longer shareable.')
-    } catch (error) {
-      console.error('Disable collaboration error:', error)
-      alert(`Error switching to solo mode: ${error.message}`)
-    }
-  }, [disableCollaboration, isSwitching]);
 
   // ✅ KEYBOARD SHORTCUTS
   useEffect(() => {
@@ -252,10 +198,11 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
   return (
     <>
       <EditorStyles />
-      <div className="h-full flex flex-col bg-gray-50">
-        <div className="flex-1 mx-4 my-2 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden">
-          
-          {/* ✅ ENHANCED MODE INDICATOR WITH SWITCHING STATE */}
+      {/* ✅ REMOVED HEADER - Now handled at page level */}
+      <div className="h-full bg-gray-50">
+        <div className="h-full mx-4 my-2 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden">
+
+          {/* ✅ SIMPLIFIED MODE INDICATOR */}
           <div className="border-b bg-gray-50 px-4 py-2 text-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -268,27 +215,21 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
                     {isCollaborationMode ? '🤝 Collaboration Mode' : '📝 Solo Mode'}
                   </span>
                 )}
-                
-                {isCollaborationMode && !isSwitching && (
-                  <span className="text-green-600 font-medium">
-                    {peerCount} {peerCount === 1 ? 'collaborator' : 'collaborators'} connected
-                  </span>
-                )}
-                
+
                 {/* ✅ SMART WARNING: Only show for concerning patterns */}
                 {shouldShowWarning && (
                   <span className="text-yellow-600 font-medium">
                     ⚠️ Collaboration active
                   </span>
                 )}
-                
+
                 {criticalError && (
                   <span className="text-red-600 font-medium">
                     ❌ Connection Issue
                   </span>
                 )}
               </div>
-              
+
               <div className="flex items-center gap-2 text-xs text-gray-500">
                 <span>Field: <code>{(standardFieldName || `editor-${documentId}`).slice(0, 20)}...</code></span>
                 {isCollaborationMode && (
@@ -310,57 +251,12 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
             />
           )}
 
-          {/* ✅ ENHANCED TOOLBAR WITH MODE SWITCHING */}
+          {/* ✅ SIMPLIFIED TOOLBAR - No collaboration controls */}
           <div className="flex items-center justify-between border-b bg-muted/20">
             <div className="flex items-center gap-2">
               <EditorToolbar editor={editor} />
-              
-              {/* ✅ COLLABORATION CONTROLS */}
-              <div className="ml-4 border-l pl-4 flex gap-2">
-                {!isCollaborationMode ? (
-                  <button
-                    onClick={handleShareDocument}
-                    disabled={isSwitching}
-                    className={`px-3 py-2 text-white text-sm rounded transition-colors ${
-                      isSwitching 
-                        ? 'bg-gray-400 cursor-not-allowed' 
-                        : 'bg-blue-500 hover:bg-blue-600'
-                    }`}
-                  >
-                    {isSwitching ? '🔄 Enabling...' : '🔗 Enable Collaboration'}
-                  </button>
-                ) : (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={async () => {
-                        try {
-                          const url = window.location.href;
-                          await navigator.clipboard.writeText(url);
-                          alert(`Collaboration link copied!\n\n${url}`);
-                        } catch (error) {
-                          alert('Failed to copy link');
-                        }
-                      }}
-                      className="px-3 py-2 bg-green-500 text-white text-sm rounded hover:bg-green-600 transition-colors"
-                    >
-                      📋 Copy Link
-                    </button>
-                    <button
-                      onClick={handleDisableCollaboration}
-                      disabled={isSwitching}
-                      className={`px-3 py-2 text-white text-sm rounded transition-colors ${
-                        isSwitching 
-                          ? 'bg-gray-400 cursor-not-allowed' 
-                          : 'bg-orange-500 hover:bg-orange-600'
-                      }`}
-                    >
-                      {isSwitching ? '🔄 Disabling...' : '📝 Switch to Solo'}
-                    </button>
-                  </div>
-                )}
-              </div>
-              
-              {/* ✅ DEVELOPMENT TOOLS */}
+
+              {/* ✅ DEVELOPMENT TOOLS ONLY */}
               {process.env.NODE_ENV === 'development' && criticalError && (
                 <div className="ml-4 border-l pl-4">
                   <button
@@ -373,7 +269,7 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
                 </div>
               )}
             </div>
-            
+
             <div className="px-4">
               <SaveIndicator saveStatus={saveStatus} />
             </div>
@@ -387,8 +283,8 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
                   <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
                   <div className="text-blue-600 text-lg font-medium">🔄 Switching Modes</div>
                   <p className="text-gray-600 max-w-md">
-                    {isCollaborationMode 
-                      ? "Enabling collaboration features... Your content is being preserved." 
+                    {isCollaborationMode
+                      ? "Enabling collaboration features... Your content is being preserved."
                       : "Switching to solo mode... Your content is being preserved."
                     }
                   </p>
@@ -471,10 +367,36 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
   )
 }
 
-export default function EditorContainer({ documentId, title }) {
+export default function EditorContainer({
+  documentId,
+  title,
+  // ✅ RECEIVE ALL COLLABORATION PROPS
+  ydoc,
+  provider,
+  isCollaborationMode,
+  collaborationToken,
+  standardFieldName,
+  isSwitching,
+  peerCount,
+  connectionStatus,
+  activePeers
+}) {
   return (
     <ClientOnly fallback={<div>Loading...</div>}>
-      <EditorContainerContent documentId={documentId} title={title} />
+      <EditorContainerContent
+        documentId={documentId}
+        title={title}
+        // ✅ PASS THROUGH ALL COLLABORATION PROPS
+        ydoc={ydoc}
+        provider={provider}
+        isCollaborationMode={isCollaborationMode}
+        collaborationToken={collaborationToken}
+        standardFieldName={standardFieldName}
+        isSwitching={isSwitching}
+        peerCount={peerCount}
+        connectionStatus={connectionStatus}
+        activePeers={activePeers}
+      />
     </ClientOnly>
   )
 }

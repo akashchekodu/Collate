@@ -19,12 +19,12 @@ import('../services/collabService')
   .then(module => {
     console.log('✅ SUCCESS: ShareDialog can import collabService!');
     console.log('Available exports:', Object.keys(module));
-    
+
     const { collaborationService } = module;
     if (collaborationService) {
       console.log('✅ collaborationService available');
       console.log('Methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(collaborationService)));
-      
+
       // Test basic functionality
       return collaborationService.enableCollaboration('test-share-dialog');
     } else {
@@ -41,7 +41,7 @@ import('../services/collabService')
     console.log('Need to fix import path or file location');
   });
 
-  
+
 export default function ShareDialog({ documentId, documentTitle, isOpen, onClose }) {
   const [collaborationData, setCollaborationData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -76,7 +76,7 @@ export default function ShareDialog({ documentId, documentTitle, isOpen, onClose
 
   const generatePermanentLink = async () => {
     if (!documentId) return;
-    
+
     try {
       const link = await collaborationService.generatePermanentLink(documentId);
       if (link) {
@@ -89,7 +89,7 @@ export default function ShareDialog({ documentId, documentTitle, isOpen, onClose
 
   const generateInvitationLink = async () => {
     if (!documentId) return;
-    
+
     try {
       const invitation = await collaborationService.generateInvitationLink(documentId);
       if (invitation) {
@@ -159,8 +159,8 @@ export default function ShareDialog({ documentId, documentTitle, isOpen, onClose
                           Expires: {new Date(link.expiresAt).toLocaleDateString()}
                         </p>
                       </div>
-                      <Button 
-                        size="sm" 
+                      <Button
+                        size="sm"
                         variant="ghost"
                         onClick={() => copyToClipboard(link.url, `perm-${index}`)}
                       >
@@ -195,8 +195,8 @@ export default function ShareDialog({ documentId, documentTitle, isOpen, onClose
                         </p>
                       </div>
                       {!invitation.used && (
-                        <Button 
-                          size="sm" 
+                        <Button
+                          size="sm"
                           variant="ghost"
                           onClick={() => copyToClipboard(invitation.url, `inv-${index}`)}
                         >

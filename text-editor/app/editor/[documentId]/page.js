@@ -5,11 +5,27 @@ import { useState, useEffect } from "react";
 import ClientOnly from "./components/ClientOnly";
 import EditorHeader from "./EditorHeader";
 import EditorContainer from "./EditorContainer";
+import { useYjsRoom } from "./hooks/useYjsRoom";
+import { useAwareness } from "./hooks/useAwareness";
 
 export default function EditorPage() {
   const { documentId } = useParams();
   const [title, setTitle] = useState("Untitled Document");
   const [isElectron, setIsElectron] = useState(false);
+
+  // ✅ GET COLLABORATION STATE AT PAGE LEVEL
+  const {
+    ydoc,
+    provider,
+    isCollaborationMode,
+    collaborationToken,
+    standardFieldName,
+    isSwitching,
+    enableCollaboration,
+    disableCollaboration
+  } = useYjsRoom(documentId, { documentId, documentTitle: title });
+
+  const { peerCount, connectionStatus, activePeers } = useAwareness(provider, documentId);
 
   // Check if running in Electron
   useEffect(() => {
@@ -20,7 +36,7 @@ export default function EditorPage() {
   useEffect(() => {
     const loadDocumentTitle = async () => {
       if (!documentId || !isElectron) return;
-      
+
       try {
         const result = await window.electronAPI.documents.load(documentId);
         if (result && result.metadata && result.metadata.title) {
@@ -49,21 +65,46 @@ export default function EditorPage() {
             </div>
           </div>
           <main className="h-[calc(100vh-4rem)]">
-            <div className="container max-w-5xl mx-auto p-6 h-full">
-              <div className="rounded-lg border bg-card p-8 shadow-lg h-full">
-                <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                </div>
-              </div>
+            <div className="flex items-center justify-center h-full">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
             </div>
           </main>
         </div>
       }
     >
       <div className="h-screen bg-background overflow-hidden flex flex-col">
-        <EditorHeader documentId={documentId} initialTitle={title} onTitleChange={setTitle} />
+        {/* ✅ HEADER WITH ALL COLLABORATION PROPS */}
+        <EditorHeader
+          documentId={documentId}
+          initialTitle={title}
+          onTitleChange={setTitle}
+          // ✅ PASS COLLABORATION STATE FROM PAGE LEVEL
+          isCollaborationMode={isCollaborationMode}
+          collaborationToken={collaborationToken}
+          isSwitching={isSwitching}
+          enableCollaboration={enableCollaboration}
+          disableCollaboration={disableCollaboration}
+          peerCount={peerCount}
+          connectionStatus={connectionStatus}
+          activePeers={activePeers}
+        />
+
+        {/* ✅ CONTAINER WITH EXISTING COLLABORATION DATA */}
         <main className="flex-1 overflow-hidden">
-          <EditorContainer documentId={documentId} title={title} />
+          <EditorContainer
+            documentId={documentId}
+            title={title}
+            // ✅ PASS THE SAME COLLABORATION STATE TO CONTAINER
+            ydoc={ydoc}
+            provider={provider}
+            isCollaborationMode={isCollaborationMode}
+            collaborationToken={collaborationToken}
+            standardFieldName={standardFieldName}
+            isSwitching={isSwitching}
+            peerCount={peerCount}
+            connectionStatus={connectionStatus}
+            activePeers={activePeers}
+          />
         </main>
       </div>
     </ClientOnly>

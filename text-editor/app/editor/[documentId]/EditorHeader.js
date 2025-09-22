@@ -9,51 +9,42 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 
-import { useYjsRoom } from "./hooks/useYjsRoom"
-import { useAwareness } from "./hooks/useAwareness"
 import ClientOnly from "./components/ClientOnly"
-import ShareDialog from "@/app/components/ShareDialog"
 
-export default function EditorHeader({ documentId, initialTitle = "Untitled Document" }) {
+export default function EditorHeader({
+  documentId,
+  initialTitle = "Untitled Document",
+  // ✅ NEW: Collaboration props passed from EditorContainer
+  isCollaborationMode,
+  collaborationToken,
+  isSwitching,
+  enableCollaboration,
+  disableCollaboration,
+  peerCount,
+  connectionStatus,
+  activePeers
+}) {
   const [title, setTitle] = useState(initialTitle)
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isElectron, setIsElectron] = useState(false)
-  
-  // Collaboration state
-  const [showShareDialog, setShowShareDialog] = useState(false)
-  const [collaborationEnabled, setCollaborationEnabled] = useState(false)
-  const [collaboratorCount, setCollaboratorCount] = useState(0)
 
   const router = useRouter()
-
-  const roomName = documentId || "default-room"
-const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId });
-  const { peerCount, connectionStatus, activePeers } = useAwareness(provider, roomName)
 
   // Check if running in Electron
   useEffect(() => {
     setIsElectron(typeof window !== 'undefined' && window.electronAPI?.isElectron);
   }, []);
 
-  // Load document title and collaboration status on mount
+  // Load document title on mount
   useEffect(() => {
     const loadDocumentData = async () => {
       if (!documentId || !isElectron) return;
-      
+
       try {
         const result = await window.electronAPI.documents.load(documentId);
-        if (result && result.metadata) {
-          // Load title
-          if (result.metadata.title) {
-            setTitle(result.metadata.title);
-          }
-          
-          // Check collaboration status
-          if (result.metadata.collaboration) {
-            setCollaborationEnabled(true);
-            setCollaboratorCount(result.metadata.collaboration.collaborators?.length || 0);
-          }
+        if (result?.metadata?.title) {
+          setTitle(result.metadata.title);
         }
       } catch (error) {
         console.error('Failed to load document data:', error);
@@ -66,13 +57,11 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
   // Save title changes to backend
   const saveTitle = useCallback(async (newTitle) => {
     if (!documentId || !isElectron || !newTitle.trim()) return;
-    
+
     setIsSaving(true);
     try {
-      // Get current document state
       const currentDoc = await window.electronAPI.documents.load(documentId);
       if (currentDoc) {
-        // Save with updated title
         await window.electronAPI.documents.save(documentId, currentDoc.state, {
           ...currentDoc.metadata,
           title: newTitle.trim(),
@@ -90,13 +79,13 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
   // Handle title change with debouncing
   const handleTitleChange = useCallback((newTitle) => {
     setTitle(newTitle);
-    
+
     // Debounce save operation
     const timeoutId = setTimeout(() => {
       if (newTitle.trim() && newTitle !== initialTitle) {
         saveTitle(newTitle);
       }
-    }, 1000); // Save 1 second after user stops typing
+    }, 1000);
 
     return () => clearTimeout(timeoutId);
   }, [saveTitle, initialTitle]);
@@ -112,7 +101,7 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
   // Handle Enter key press
   const handleTitleKeyPress = (e) => {
     if (e.key === 'Enter') {
-      e.target.blur(); // This will trigger handleTitleBlur
+      e.target.blur();
     }
   };
 
@@ -130,50 +119,59 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
   const handleCopyCurrentPageLink = () => {
     if (typeof navigator !== "undefined") {
       navigator.clipboard.writeText(window.location.href)
-      // Add toast notification here if you have a toast system
       console.log('📋 Current page link copied to clipboard');
     }
   }
 
   const handleExport = async () => {
     if (!documentId || !isElectron) return;
-    
+
     try {
       const result = await window.electronAPI.documents.export(documentId, 'md');
       if (result.success) {
         console.log('✅ Document exported to:', result.path);
-        // Add success notification
       }
     } catch (error) {
       console.error('❌ Export failed:', error);
     }
   }
 
-  // Handle collaboration dialog close and refresh data
-  const handleShareDialogClose = async () => {
-    setShowShareDialog(false);
-    
-    // Refresh collaboration status
-    if (documentId && isElectron) {
-      try {
-        const result = await window.electronAPI.documents.load(documentId);
-        if (result?.metadata?.collaboration) {
-          setCollaborationEnabled(true);
-          setCollaboratorCount(result.metadata.collaboration.collaborators?.length || 0);
-        }
-      } catch (error) {
-        console.error('Failed to refresh collaboration status:', error);
-      }
-    }
-  };
+  // ✅ NEW: Collaboration functions moved to header
+  const handleEnableCollaboration = useCallback(async () => {
+    if (isSwitching || !enableCollaboration) return;
 
-  // Get total collaborators (peers + established collaborators)
-  const getTotalCollaborators = () => {
-    const liveCollaborators = peerCount;
-    const establishedCollaborators = collaboratorCount;
-    // Avoid double counting if some established collaborators are currently online
-    return Math.max(liveCollaborators, establishedCollaborators);
-  };
+    try {
+      console.log('🔄 Starting collaboration from header');
+
+      const { collaborationService } = await import('../../services/collabService')
+      const linkData = await collaborationService.generateCollaborationLink(documentId)
+
+      if (linkData?.url && linkData?.token) {
+        await enableCollaboration(linkData.token);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await navigator.clipboard.writeText(linkData.url)
+
+        alert(`✅ Collaboration enabled!\n\nLink copied to clipboard:\n${linkData.url}\n\nYour document is now in collaboration mode!`)
+      } else {
+        alert('Failed to generate collaboration link.')
+      }
+    } catch (error) {
+      console.error('Share error:', error)
+      alert(`Error enabling collaboration: ${error.message}`)
+    }
+  }, [documentId, enableCollaboration, isSwitching]);
+
+  const handleDisableCollaboration = useCallback(async () => {
+    if (isSwitching || !disableCollaboration) return;
+
+    try {
+      await disableCollaboration();
+      alert('📝 Switched to solo mode.\n\nYour document is now private.');
+    } catch (error) {
+      console.error('Disable collaboration error:', error)
+      alert(`Error switching to solo mode: ${error.message}`)
+    }
+  }, [disableCollaboration, isSwitching]);
 
   return (
     <ClientOnly
@@ -187,7 +185,7 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
     >
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="w-full flex h-16 items-center justify-between px-6 mx-auto">
-          
+
           {/* Left Section */}
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="sm" onClick={() => router.push("/")} className="p-2">
@@ -201,7 +199,6 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
                   value={title}
                   onChange={(e) => {
                     const cleanup = handleTitleChange(e.target.value);
-                    // Store cleanup function for potential use
                     if (cleanup && typeof cleanup === 'function') {
                       setTimeout(cleanup, 2000);
                     }
@@ -209,13 +206,12 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
                   onFocus={() => setIsEditing(true)}
                   onBlur={handleTitleBlur}
                   onKeyPress={handleTitleKeyPress}
-                  className={`text-lg font-medium bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 px-0 h-auto min-w-[200px] max-w-[400px] ${
-                    isEditing ? 'text-primary' : 'text-foreground'
-                  }`}
+                  className={`text-lg font-medium bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 px-0 h-auto min-w-[200px] max-w-[400px] ${isEditing ? 'text-primary' : 'text-foreground'
+                    }`}
                   placeholder="Untitled Document"
                   disabled={!isElectron}
                 />
-                
+
                 {/* Saving indicator */}
                 {isSaving && (
                   <div className="absolute -right-6 top-1/2 transform -translate-y-1/2">
@@ -232,17 +228,10 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
                 <Badge variant="outline" className="text-xs">
                   {peerCount === 0 ? "Solo" : `${peerCount} ${peerCount === 1 ? "peer" : "peers"}`}
                 </Badge>
-                
-                {/* Show total collaborators if collaboration is enabled */}
-                {collaborationEnabled && getTotalCollaborators() > 0 && (
-                  <Badge variant="secondary" className="text-xs">
-                    {getTotalCollaborators()} total
-                  </Badge>
-                )}
               </div>
 
               {/* Active Peers Avatars */}
-              {activePeers.length > 0 && (
+              {activePeers && activePeers.length > 0 && (
                 <div className="flex -space-x-2">
                   {activePeers.slice(0, 3).map((peer, index) => (
                     <Avatar key={peer.clientId || index} className="h-8 w-8 border-2 border-background">
@@ -263,23 +252,55 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
             </div>
           </div>
 
-          {/* Right Section */}
+          {/* ✅ UPDATED: Right Section with Working Collaboration Controls */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            {/* Updated Share Button - Now opens ShareDialog */}
-            <Button 
-              onClick={() => setShowShareDialog(true)} 
-              className="gap-2"
-              disabled={!isElectron}
-            >
-              <Share2 size={16} />
-              <span className="hidden sm:inline">
-                {collaborationEnabled ? "Manage" : "Share"}
-              </span>
-            </Button>
+            {/* ✅ COLLABORATION CONTROLS MOVED HERE */}
+            {!isCollaborationMode ? (
+              <Button
+                onClick={handleEnableCollaboration}
+                disabled={isSwitching || !isElectron}
+                className={`gap-2 ${isSwitching ? 'bg-gray-400' : 'bg-blue-500 hover:bg-blue-600'}`}
+              >
+                <Share2 size={16} />
+                <span className="hidden sm:inline">
+                  {isSwitching ? 'Enabling...' : 'Enable Collaboration'}
+                </span>
+              </Button>
+            ) : (
+              <div className="flex gap-2">
+                <Button
+                  onClick={async () => {
+                    try {
+                      const url = window.location.href;
+                      await navigator.clipboard.writeText(url);
+                      alert(`Collaboration link copied!\n\n${url}`);
+                    } catch (error) {
+                      alert('Failed to copy link');
+                    }
+                  }}
+                  className="gap-2 bg-green-500 hover:bg-green-600"
+                >
+                  <Copy size={16} />
+                  <span className="hidden sm:inline">Copy Link</span>
+                </Button>
 
-            <Button 
-              variant="outline" 
-              onClick={handleExport} 
+                <Button
+                  variant="outline"
+                  onClick={handleDisableCollaboration}
+                  disabled={isSwitching}
+                  className={`gap-2 ${isSwitching ? 'bg-gray-400' : 'hover:bg-orange-50'}`}
+                >
+                  <FileText size={16} />
+                  <span className="hidden sm:inline">
+                    {isSwitching ? 'Switching...' : 'Solo Mode'}
+                  </span>
+                </Button>
+              </div>
+            )}
+
+            <Button
+              variant="outline"
+              onClick={handleExport}
               className="gap-2 bg-transparent"
               disabled={!isElectron}
             >
@@ -305,14 +326,6 @@ const { provider, setCollaborationToken } = useYjsRoom(roomName, { documentId })
             </DropdownMenu>
           </div>
         </div>
-        
-        {/* Share Dialog */}
-        <ShareDialog 
-          documentId={documentId}
-          documentTitle={title}
-          isOpen={showShareDialog}
-          onClose={handleShareDialogClose}
-        />
       </header>
     </ClientOnly>
   )
