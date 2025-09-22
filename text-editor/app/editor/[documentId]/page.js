@@ -1,4 +1,3 @@
-// app/editor/[documentId]/page.js
 "use client";
 import { useParams } from "next/navigation";
 import { useState, useEffect } from "react";
@@ -13,7 +12,7 @@ export default function EditorPage() {
   const [title, setTitle] = useState("Untitled Document");
   const [isElectron, setIsElectron] = useState(false);
 
-  // ✅ GET COLLABORATION STATE AT PAGE LEVEL
+  // ✅ UPDATED: Removed isPermanentlyCollaborative
   const {
     ydoc,
     provider,
@@ -73,12 +72,11 @@ export default function EditorPage() {
       }
     >
       <div className="h-screen bg-background overflow-hidden flex flex-col">
-        {/* ✅ HEADER WITH ALL COLLABORATION PROPS */}
+        {/* ✅ UPDATED: Removed isPermanentlyCollaborative prop */}
         <EditorHeader
           documentId={documentId}
           initialTitle={title}
           onTitleChange={setTitle}
-          // ✅ PASS COLLABORATION STATE FROM PAGE LEVEL
           isCollaborationMode={isCollaborationMode}
           collaborationToken={collaborationToken}
           isSwitching={isSwitching}
@@ -89,12 +87,10 @@ export default function EditorPage() {
           activePeers={activePeers}
         />
 
-        {/* ✅ CONTAINER WITH EXISTING COLLABORATION DATA */}
         <main className="flex-1 overflow-hidden">
           <EditorContainer
             documentId={documentId}
             title={title}
-            // ✅ PASS THE SAME COLLABORATION STATE TO CONTAINER
             ydoc={ydoc}
             provider={provider}
             isCollaborationMode={isCollaborationMode}

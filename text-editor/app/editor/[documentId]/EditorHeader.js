@@ -5,7 +5,7 @@ import { ArrowLeft, Share2, Download, Users, Wifi, WifiOff, MoreHorizontal, Copy
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 
@@ -14,7 +14,7 @@ import ClientOnly from "./components/ClientOnly"
 export default function EditorHeader({
   documentId,
   initialTitle = "Untitled Document",
-  // ✅ NEW: Collaboration props passed from EditorContainer
+  // ✅ UPDATED: Removed isPermanentlyCollaborative prop
   isCollaborationMode,
   collaborationToken,
   isSwitching,
@@ -136,30 +136,203 @@ export default function EditorHeader({
     }
   }
 
-  // ✅ NEW: Collaboration functions moved to header
+  // ✅ FIXED: Enhanced clipboard access with focus handling
+  // ✅ FIXED: Much simpler clipboard with better error handling
+  const copyToClipboardSafely = useCallback(async (text, description = "Link") => {
+    try {
+      // Try modern clipboard API first
+      await navigator.clipboard.writeText(text);
+      console.log(`✅ ${description} copied to clipboard:`, text.slice(0, 50) + '...');
+      return true;
+    } catch (error) {
+      console.warn(`⚠️ Modern clipboard failed for ${description}:`, error);
+
+      // Fallback: Create textarea and select
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+
+        // Focus and select
+        textarea.focus();
+        textarea.select();
+        textarea.setSelectionRange(0, text.length);
+
+        // Try copy command
+        const success = document.execCommand('copy');
+        document.body.removeChild(textarea);
+
+        if (success) {
+          console.log(`✅ ${description} copied via fallback`);
+          return true;
+        }
+      } catch (fallbackError) {
+        console.warn(`❌ Fallback copy failed:`, fallbackError);
+      }
+
+      // Last resort: Show the link in alert so user can copy manually
+      alert(`${description} generated! Please copy it manually:\n\n${text}`);
+      return false;
+    }
+  }, []);
+
+  // ✅ FIXED: Generate permanent link with focus handling
+  const handleGeneratePermanentLink = useCallback(async () => {
+    if (!documentId || !isElectron) return;
+
+    try {
+      console.log('🔗 Generating permanent link from header dropdown...');
+
+      const { collaborationService } = await import('../../services/collabService');
+      const link = await collaborationService.generateLongExpiryLink(documentId, ['read', 'write']);
+
+      if (link?.url) {
+        const copySuccess = await copyToClipboardSafely(link.url, "Permanent link");
+
+        console.log('✅ Permanent link generated:', link.url);
+
+        alert(`🔗 Permanent Link Created!\n\n${copySuccess ? 'Link copied to clipboard!' : 'Please copy the link from the alert above'}\n\nURL: ${link.url}\n\nExpires: ${new Date(link.expiresAt).toLocaleDateString()}\n\nThis link will work for 30 days and can be used multiple times.`);
+      } else {
+        alert('❌ Failed to generate permanent link. Please try again.');
+      }
+    } catch (error) {
+      console.error('❌ Failed to generate permanent link:', error);
+      alert(`❌ Error generating permanent link: ${error.message}`);
+    }
+  }, [documentId, isElectron, copyToClipboardSafely]);
+
+  const handleGenerateOneTimeInvitation = useCallback(async () => {
+    if (!documentId || !isElectron) return;
+
+    try {
+      console.log('🎫 Generating one-time invitation from header dropdown...');
+
+      const { collaborationService } = await import('../../services/collabService');
+      const invitation = await collaborationService.generateOneTimeInvitation(documentId, 'Header User');
+
+      if (invitation?.url) {
+        const copySuccess = await copyToClipboardSafely(invitation.url, "One-time invitation");
+
+        console.log('✅ One-time invitation generated:', invitation.url);
+
+        alert(`🎫 One-Time Invitation Created!\n\n${copySuccess ? 'Link copied to clipboard!' : 'Please copy the link from the alert above'}\n\nURL: ${invitation.url}\n\nExpires: ${new Date(invitation.expiresAt).toLocaleDateString()}\n\n⚠️ This link can only be used ONCE and will be disabled after the first person joins.`);
+      } else {
+        alert('❌ Failed to generate one-time invitation. Please try again.');
+      }
+    } catch (error) {
+      console.error('❌ Failed to generate one-time invitation:', error);
+      alert(`❌ Error generating one-time invitation: ${error.message}`);
+    }
+  }, [documentId, isElectron, copyToClipboardSafely]);
+
+  const handleShowCollaborationInfo = useCallback(async () => {
+    if (!documentId || !isElectron) return;
+
+    try {
+      console.log('📊 Getting collaboration info...');
+
+      const { collaborationService } = await import('../../services/collabService');
+      const data = await collaborationService.getEnhancedCollaborationData(documentId);
+
+      const permanentCount = data.links?.permanent?.length || 0;
+      const oneTimeCount = data.links?.oneTime?.length || 0;
+      const usedOneTime = data.links?.oneTime?.filter(link => link.used).length || 0;
+
+      alert(`📊 Collaboration Status\n\n` +
+        `Document: ${title}\n` +
+        `Mode: ${data.mode || 'solo'}\n` +
+        `Session Persistent: ${data.sessionPersistent ? 'Yes' : 'No'}\n` +
+        `Active Peers: ${peerCount}\n\n` +
+        `📎 Links Created:\n` +
+        `• Permanent Links: ${permanentCount}\n` +
+        `• One-time Invitations: ${oneTimeCount}\n` +
+        `• Used Invitations: ${usedOneTime}\n\n` +
+        `🔒 Security:\n` +
+        `• Revoked Links: ${data.revoked?.length || 0}\n` +
+        `• Schema Version: ${data.schemaVersion || 1}`);
+
+    } catch (error) {
+      console.error('❌ Failed to get collaboration info:', error);
+      alert('❌ Failed to get collaboration information');
+    }
+  }, [documentId, isElectron, title, peerCount]);
+
+  // ✅ DEBUG: Debug collaboration data
+  const debugCollaborationData = useCallback(async () => {
+    if (!documentId || !isElectron) return;
+
+    try {
+      console.log('🔍 DEBUG: Checking collaboration data for:', documentId);
+
+      // Check what's in the document
+      const doc = await window.electronAPI.documents.load(documentId);
+      console.log('📄 Raw document data:', doc);
+      console.log('📄 Collaboration metadata:', doc?.metadata?.collaboration);
+
+      // Check what collaborationService sees
+      const { collaborationService } = await import('../../services/collabService');
+      const collabData = await collaborationService.getCollaborationData(documentId);
+      console.log('🤝 CollaborationService data:', collabData);
+
+      // Show alert with debug info
+      alert(`🔍 DEBUG INFO\n\n` +
+        `Document ID: ${documentId.slice(0, 8)}...\n` +
+        `Has metadata: ${!!doc?.metadata}\n` +
+        `Has collaboration: ${!!doc?.metadata?.collaboration}\n` +
+        `Collaboration mode: ${doc?.metadata?.collaboration?.mode || 'none'}\n` +
+        `Enabled: ${doc?.metadata?.collaboration?.enabled || false}\n` +
+        `Session Persistent: ${doc?.metadata?.collaboration?.sessionPersistent || false}\n` +
+        `Link exists: ${!!doc?.metadata?.collaboration?.link}\n` +
+        `Token exists: ${!!doc?.metadata?.collaboration?.link?.token}\n\n` +
+        `Service sees mode: ${collabData?.mode || 'none'}\n` +
+        `Service sees enabled: ${collabData?.enabled || false}\n` +
+        `Service sees session persistent: ${collabData?.sessionPersistent || false}`);
+
+    } catch (error) {
+      console.error('❌ Debug failed:', error);
+      alert('Debug failed: ' + error.message);
+    }
+  }, [documentId, isElectron]);
+
+  // ✅ SIMPLE FIX: Generate link directly, don't rely on enableCollaboration having token
   const handleEnableCollaboration = useCallback(async () => {
     if (isSwitching || !enableCollaboration) return;
 
     try {
       console.log('🔄 Starting collaboration from header');
 
-      const { collaborationService } = await import('../../services/collabService')
-      const linkData = await collaborationService.generateCollaborationLink(documentId)
+      // ✅ STEP 1: Generate collaboration link directly
+      const { collaborationService } = await import('../../services/collabService');
+      const linkData = await collaborationService.generateCollaborationLink(documentId);
 
-      if (linkData?.url && linkData?.token) {
-        await enableCollaboration(linkData.token);
-        await new Promise(resolve => setTimeout(resolve, 500));
-        await navigator.clipboard.writeText(linkData.url)
-
-        alert(`✅ Collaboration enabled!\n\nLink copied to clipboard:\n${linkData.url}\n\nYour document is now in collaboration mode!`)
-      } else {
-        alert('Failed to generate collaboration link.')
+      if (!linkData?.url || !linkData?.token) {
+        throw new Error('Failed to generate collaboration link');
       }
+
+      console.log('✅ Collaboration link generated:', linkData.url);
+
+      // ✅ STEP 2: Enable in UI state
+      await enableCollaboration(linkData.token);
+
+      // ✅ STEP 3: Copy link
+      const copySuccess = await copyToClipboardSafely(linkData.url, "Collaboration link");
+
+      // ✅ STEP 4: Show success message
+      const message = copySuccess
+        ? `✅ Collaboration enabled!\n\nLink copied to clipboard:\n${linkData.url}\n\nYour document will stay in collaboration mode until you click "Solo Mode".`
+        : `✅ Collaboration enabled!\n\nYour document will stay in collaboration mode until you click "Solo Mode".`;
+
+      alert(message);
+
+      console.log('✅ Collaboration enabling completed successfully');
+
     } catch (error) {
-      console.error('Share error:', error)
-      alert(`Error enabling collaboration: ${error.message}`)
+      console.error('❌ Collaboration enabling failed:', error);
+      alert(`❌ Error enabling collaboration: ${error.message}\n\nPlease try again.`);
     }
-  }, [documentId, enableCollaboration, isSwitching]);
+  }, [documentId, enableCollaboration, isSwitching, copyToClipboardSafely]);
 
   const handleDisableCollaboration = useCallback(async () => {
     if (isSwitching || !disableCollaboration) return;
@@ -252,9 +425,8 @@ export default function EditorHeader({
             </div>
           </div>
 
-          {/* ✅ UPDATED: Right Section with Working Collaboration Controls */}
+          {/* ✅ UPDATED: Right Section with Session-Persistent Collaboration */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            {/* ✅ COLLABORATION CONTROLS MOVED HERE */}
             {!isCollaborationMode ? (
               <Button
                 onClick={handleEnableCollaboration}
@@ -272,8 +444,8 @@ export default function EditorHeader({
                   onClick={async () => {
                     try {
                       const url = window.location.href;
-                      await navigator.clipboard.writeText(url);
-                      alert(`Collaboration link copied!\n\n${url}`);
+                      const copySuccess = await copyToClipboardSafely(url, "Current collaboration link");
+                      alert(`${copySuccess ? 'Current collaboration link copied!' : 'Please copy the link from the alert above'}\n\n${url}\n\nUse the menu (⋯) for more sharing options.`);
                     } catch (error) {
                       alert('Failed to copy link');
                     }
@@ -281,9 +453,10 @@ export default function EditorHeader({
                   className="gap-2 bg-green-500 hover:bg-green-600"
                 >
                   <Copy size={16} />
-                  <span className="hidden sm:inline">Copy Link</span>
+                  <span className="hidden sm:inline">Copy Current</span>
                 </Button>
 
+                {/* ✅ CHANGED: Solo Mode button is ALWAYS visible in collaboration mode */}
                 <Button
                   variant="outline"
                   onClick={handleDisableCollaboration}
@@ -308,17 +481,47 @@ export default function EditorHeader({
               <span className="hidden sm:inline">Export</span>
             </Button>
 
+            {/* ✅ ENHANCED: Dropdown with debug options */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="p-2">
                   <MoreHorizontal size={20} />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuItem onClick={handleCopyCurrentPageLink}>
                   <Copy size={16} className="mr-2" />
                   Copy Current URL
                 </DropdownMenuItem>
+
+                {/* ✅ NEW: Enhanced sharing options (only show when in collaboration mode) */}
+                {isCollaborationMode && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={handleGeneratePermanentLink} disabled={!isElectron}>
+                      <Link size={16} className="mr-2" />
+                      Generate Permanent Link
+                    </DropdownMenuItem>
+
+                    <DropdownMenuItem onClick={handleGenerateOneTimeInvitation} disabled={!isElectron}>
+                      <Users size={16} className="mr-2" />
+                      Create One-Time Invitation
+                    </DropdownMenuItem>
+
+                    <DropdownMenuItem onClick={handleShowCollaborationInfo} disabled={!isElectron}>
+                      <Share2 size={16} className="mr-2" />
+                      Collaboration Info
+                    </DropdownMenuItem>
+
+                    {/* ✅ DEBUG: Add debug option */}
+                    <DropdownMenuItem onClick={debugCollaborationData} disabled={!isElectron}>
+                      <span className="mr-2">🔍</span>
+                      Debug Collaboration Data
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+
                 <DropdownMenuItem>Settings</DropdownMenuItem>
                 <DropdownMenuItem>Version History</DropdownMenuItem>
                 <DropdownMenuItem>Help</DropdownMenuItem>

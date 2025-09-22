@@ -6,13 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { collaborationService } from '../services/collabService';
 
-
 // Test if this component can import the service:
 console.log('🧪 Testing ShareDialog import compatibility...');
-
-// Check if the import would work from this component's location
-// Since this is in app/components/, the import '../services/collabService' 
-// would look for app/services/collabService.js
 
 // Test the import path
 import('../services/collabService')
@@ -41,7 +36,6 @@ import('../services/collabService')
     console.log('Need to fix import path or file location');
   });
 
-
 export default function ShareDialog({ documentId, documentTitle, isOpen, onClose }) {
   const [collaborationData, setCollaborationData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -57,46 +51,86 @@ export default function ShareDialog({ documentId, documentTitle, isOpen, onClose
     collaborationService.initialize();
   }, []);
 
+  // ✅ ENHANCED: Use the new enhanced collaboration data method
   const loadCollaborationData = async () => {
     setIsLoading(true);
     try {
-      const data = await collaborationService.getCollaborationData(documentId);
-      if (!data) {
-        // Enable collaboration if not already enabled
+      console.log('📋 ShareDialog: Loading enhanced collaboration data for:', documentId.slice(0, 8));
+
+      // ✅ NEW: Use enhanced collaboration data retrieval
+      const data = await collaborationService.getEnhancedCollaborationData(documentId);
+
+      console.log('📋 ShareDialog: Enhanced collaboration data loaded:', {
+        enabled: data.enabled,
+        mode: data.mode,
+        permanentLinks: data.links?.permanent?.length || 0,
+        oneTimeLinks: data.links?.oneTime?.length || 0,
+        participants: data.participants?.length || 0
+      });
+
+      setCollaborationData(data);
+
+      // Enable collaboration if not already enabled
+      if (!data.enabled) {
+        console.log('🔄 Enabling collaboration for ShareDialog...');
         const newData = await collaborationService.enableCollaboration(documentId, documentTitle);
-        setCollaborationData(newData);
-      } else {
-        setCollaborationData(data);
+        if (newData) {
+          // Reload enhanced data after enabling
+          const enhancedData = await collaborationService.getEnhancedCollaborationData(documentId);
+          setCollaborationData(enhancedData);
+        }
       }
     } catch (error) {
-      console.error('Failed to load collaboration data:', error);
+      console.error('Failed to load enhanced collaboration data:', error);
     }
     setIsLoading(false);
   };
 
-  const generatePermanentLink = async () => {
+  // ✅ NEW: Generate long-expiry permanent link
+  const generateLongExpiryLink = async () => {
     if (!documentId) return;
 
     try {
-      const link = await collaborationService.generatePermanentLink(documentId);
+      console.log('🔗 ShareDialog: Generating long-expiry link...');
+
+      // ✅ NEW: Use the enhanced method  
+      const link = await collaborationService.generateLongExpiryLink(documentId, ['read', 'write']);
+
       if (link) {
-        await loadCollaborationData(); // Refresh data
+        console.log('✅ Long-expiry link created:', link.url);
+        await loadCollaborationData(); // Refresh to show new link
+
+        // Copy to clipboard and show success
+        await copyToClipboard(link.url, `perm-${link.linkId}`);
+        alert(`Permanent collaboration link created!\n\nLink copied to clipboard:\n${link.url}\n\nExpires: ${new Date(link.expiresAt).toLocaleDateString()}`);
       }
     } catch (error) {
-      console.error('Failed to generate permanent link:', error);
+      console.error('Failed to generate long-expiry link:', error);
+      alert('Failed to generate permanent link');
     }
   };
 
-  const generateInvitationLink = async () => {
+  // ✅ NEW: Generate one-time invitation
+  const generateOneTimeInvitation = async () => {
     if (!documentId) return;
 
     try {
-      const invitation = await collaborationService.generateInvitationLink(documentId);
+      console.log('🎫 ShareDialog: Generating one-time invitation...');
+
+      // ✅ NEW: Use the enhanced method
+      const invitation = await collaborationService.generateOneTimeInvitation(documentId, 'Anonymous User');
+
       if (invitation) {
-        await loadCollaborationData(); // Refresh data
+        console.log('✅ One-time invitation created:', invitation.url);
+        await loadCollaborationData(); // Refresh to show new invitation
+
+        // Copy to clipboard and show success
+        await copyToClipboard(invitation.url, `inv-${invitation.linkId}`);
+        alert(`One-time invitation created!\n\nLink copied to clipboard:\n${invitation.url}\n\nThis link can only be used once.\nExpires: ${new Date(invitation.expiresAt).toLocaleDateString()}`);
       }
     } catch (error) {
-      console.error('Failed to generate invitation link:', error);
+      console.error('Failed to generate one-time invitation:', error);
+      alert('Failed to generate one-time invitation');
     }
   };
 
@@ -105,6 +139,7 @@ export default function ShareDialog({ documentId, documentTitle, isOpen, onClose
       await navigator.clipboard.writeText(text);
       setCopiedLink(linkId);
       setTimeout(() => setCopiedLink(null), 2000);
+      console.log('📋 Link copied to clipboard:', text.slice(0, 50) + '...');
     } catch (error) {
       console.error('Failed to copy to clipboard:', error);
     }
@@ -134,85 +169,132 @@ export default function ShareDialog({ documentId, documentTitle, isOpen, onClose
               <div className="text-center">
                 <h3 className="font-medium text-gray-900">{documentTitle}</h3>
                 <p className="text-sm text-gray-600 mt-1">
-                  {collaborationData?.collaborators?.length || 0} collaborators
+                  {collaborationData?.participants?.length || 0} participants • {collaborationData?.mode || 'solo'} mode
                 </p>
               </div>
 
-              {/* Permanent Links */}
+              {/* ✅ UPDATED: Permanent Links with new data structure */}
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="font-medium flex items-center gap-2">
                     <Link size={16} />
                     Permanent Links
                   </h4>
-                  <Button size="sm" variant="outline" onClick={generatePermanentLink}>
+                  <Button size="sm" variant="outline" onClick={generateLongExpiryLink}>
                     Generate
                   </Button>
                 </div>
 
-                {collaborationData?.permanentLinks?.map((link, index) => (
-                  <div key={index} className="border rounded-lg p-3 mb-2">
+                {collaborationData?.links?.permanent?.map((link) => (
+                  <div key={link.linkId} className="border rounded-lg p-3 mb-2">
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm font-medium">Permanent Access</p>
                         <p className="text-xs text-gray-600">
+                          Created: {new Date(link.createdAt).toLocaleDateString()}
+                        </p>
+                        <p className="text-xs text-gray-600">
                           Expires: {new Date(link.expiresAt).toLocaleDateString()}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          Permissions: {link.permissions?.join(', ') || 'read, write'}
                         </p>
                       </div>
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => copyToClipboard(link.url, `perm-${index}`)}
+                        onClick={() => copyToClipboard(link.url, `perm-${link.linkId}`)}
+                        title="Copy link to clipboard"
                       >
-                        {copiedLink === `perm-${index}` ? <Check size={16} /> : <Copy size={16} />}
+                        {copiedLink === `perm-${link.linkId}` ? <Check size={16} /> : <Copy size={16} />}
                       </Button>
                     </div>
                   </div>
-                ))}
+                )) || null}
+
+                {(!collaborationData?.links?.permanent || collaborationData.links.permanent.length === 0) && (
+                  <p className="text-sm text-gray-600 text-center py-4">
+                    No permanent links created yet
+                  </p>
+                )}
               </div>
 
-              {/* One-time Invitations */}
+              {/* ✅ UPDATED: One-time Invitations with new data structure */}
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="font-medium flex items-center gap-2">
                     <Users size={16} />
                     One-time Invitations
                   </h4>
-                  <Button size="sm" variant="outline" onClick={generateInvitationLink}>
+                  <Button size="sm" variant="outline" onClick={generateOneTimeInvitation}>
                     Create
                   </Button>
                 </div>
 
-                {collaborationData?.invitations?.map((invitation, index) => (
-                  <div key={index} className="border rounded-lg p-3 mb-2">
+                {collaborationData?.links?.oneTime?.map((invitation) => (
+                  <div key={invitation.linkId} className="border rounded-lg p-3 mb-2">
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm font-medium">
                           {invitation.recipientName || 'Anonymous Invitation'}
                         </p>
                         <p className="text-xs text-gray-600">
-                          {invitation.used ? '✅ Used' : '⏳ Pending'}
+                          {invitation.used
+                            ? `✅ Used ${invitation.usedAt ? 'on ' + new Date(invitation.usedAt).toLocaleDateString() : ''}`
+                            : '⏳ Pending'
+                          }
                         </p>
+                        <p className="text-xs text-gray-600">
+                          Created: {new Date(invitation.createdAt).toLocaleDateString()}
+                        </p>
+                        <p className="text-xs text-gray-600">
+                          Expires: {new Date(invitation.expiresAt).toLocaleDateString()}
+                        </p>
+                        {invitation.used && invitation.usedBy && (
+                          <p className="text-xs text-gray-500">
+                            Used by: {invitation.usedBy}
+                          </p>
+                        )}
                       </div>
                       {!invitation.used && (
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => copyToClipboard(invitation.url, `inv-${index}`)}
+                          onClick={() => copyToClipboard(invitation.url, `inv-${invitation.linkId}`)}
+                          title="Copy invitation link"
                         >
-                          {copiedLink === `inv-${index}` ? <Check size={16} /> : <Copy size={16} />}
+                          {copiedLink === `inv-${invitation.linkId}` ? <Check size={16} /> : <Copy size={16} />}
                         </Button>
                       )}
                     </div>
                   </div>
-                ))}
+                )) || null}
 
-                {(!collaborationData?.invitations || collaborationData.invitations.length === 0) && (
+                {(!collaborationData?.links?.oneTime || collaborationData.links.oneTime.length === 0) && (
                   <p className="text-sm text-gray-600 text-center py-4">
                     No invitations created yet
                   </p>
                 )}
               </div>
+
+              {/* ✅ NEW: Debug info (development only) */}
+              {process.env.NODE_ENV === 'development' && collaborationData && (
+                <div className="border-t pt-4 mt-4">
+                  <details>
+                    <summary className="text-xs text-gray-500 cursor-pointer">Debug Info</summary>
+                    <div className="text-xs text-gray-500 mt-2 space-y-1">
+                      <p>Document ID: {documentId.slice(0, 8)}...</p>
+                      <p>Collaboration enabled: {String(collaborationData.enabled)}</p>
+                      <p>Mode: {collaborationData.mode}</p>
+                      <p>Schema version: {collaborationData.schemaVersion || 'legacy'}</p>
+                      <p>Permanent links: {collaborationData.links?.permanent?.length || 0}</p>
+                      <p>One-time links: {collaborationData.links?.oneTime?.length || 0}</p>
+                      <p>Participants: {collaborationData.participants?.length || 0}</p>
+                      <p>Revoked tokens: {collaborationData.revoked?.length || 0}</p>
+                    </div>
+                  </details>
+                </div>
+              )}
             </>
           )}
         </div>

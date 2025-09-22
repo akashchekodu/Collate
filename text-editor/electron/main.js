@@ -26,7 +26,7 @@ app.on('second-instance', (event, commandLine, workingDirectory) => {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   }
-  
+
   // Check if there's a protocol URL in the command line
   const url = commandLine.find(arg => arg.startsWith('collate://'));
   if (url) {
@@ -60,20 +60,20 @@ process.on('unhandledRejection', (reason, promise) => {
 function handleCollaborationUrl(url) {
   try {
     console.log('🤝 Handling collaboration URL:', url);
-    
+
     const urlObj = new URL(url);
     const params = new URLSearchParams(urlObj.search);
-    
+
     const room = params.get('room');
     const token = params.get('token');
     const doc = params.get('doc');
-    
+
     console.log('🔍 Extracted collaboration params:', {
       room: room ? `${room.substring(0, 20)}...` : 'missing',
       token: token ? 'present' : 'missing',
       doc: doc ? doc : 'missing'
     });
-    
+
     if (!room || !token || !doc) {
       console.error('❌ Invalid collaboration URL - missing required parameters');
       showErrorDialog('Invalid collaboration link', 'This collaboration link is missing required information.');
@@ -86,7 +86,7 @@ function handleCollaborationUrl(url) {
         .then(result => {
           if (result.success) {
             console.log('✅ Collaboration started successfully');
-            
+
             // Navigate main window to document
             if (mainWindow) {
               mainWindow.webContents.send('navigate-to-document', {
@@ -95,7 +95,7 @@ function handleCollaborationUrl(url) {
                 room: room,
                 token: token
               });
-              
+
               if (!mainWindow.isVisible()) {
                 mainWindow.show();
               }
@@ -112,7 +112,7 @@ function handleCollaborationUrl(url) {
         });
     } else {
       console.error('❌ Collaboration service not initialized');
-      
+
       // Fallback: Send to renderer process directly
       if (mainWindow) {
         mainWindow.webContents.send('join-collaboration', {
@@ -122,14 +122,14 @@ function handleCollaborationUrl(url) {
           timestamp: Date.now(),
           source: 'protocol-handler'
         });
-        
+
         if (!mainWindow.isVisible()) {
           mainWindow.show();
         }
         mainWindow.focus();
       }
     }
-    
+
   } catch (error) {
     console.error('❌ Error handling collaboration URL:', error);
     showErrorDialog('Protocol Error', 'Failed to process collaboration link.');
@@ -143,7 +143,7 @@ function showErrorDialog(title, message) {
 
 function createWindow() {
   console.log('📱 Creating window...');
-  
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -160,7 +160,7 @@ function createWindow() {
   });
 
   const isDev = process.env.NODE_ENV === 'development';
-  
+
   if (isDev) {
     console.log('🔥 Loading development server: http://localhost:3000');
     mainWindow.loadURL('http://localhost:3000');
@@ -179,12 +179,12 @@ function createWindow() {
 // ✅ ENHANCED: Single app.whenReady() with collaboration service
 app.whenReady().then(async () => {
   console.log('⚡ App ready, initializing services...');
-  
+
   try {
     // Initialize document storage
     documentStorage = new DocumentStorage();
     console.log('✅ DocumentStorage initialized successfully');
-    
+
     // Initialize collaboration service
     collaborationService = new CollaborationService(documentStorage);
     console.log('✅ CollaborationService initialized successfully');
@@ -199,7 +199,7 @@ app.whenReady().then(async () => {
     try {
       const docData = await documentStorage.createDocument(title);
       console.log('✅ Document created:', docData.id);
-      
+
       return {
         id: docData.id,
         title: docData.title,
@@ -303,14 +303,14 @@ app.whenReady().then(async () => {
   ipcMain.handle('collaboration:test-join', async (event, testParams) => {
     try {
       console.log('🧪 Manual collaboration test triggered:', testParams);
-      
+
       const { room, token, documentId } = testParams;
-      
+
       if (!room || !token || !documentId) {
         console.error('❌ Missing test parameters');
         return { success: false, error: 'Missing required parameters' };
       }
-      
+
       if (mainWindow) {
         mainWindow.webContents.send('join-collaboration', {
           room,
@@ -319,7 +319,7 @@ app.whenReady().then(async () => {
           timestamp: Date.now(),
           source: 'manual-test'
         });
-        
+
         console.log('✅ Manual collaboration join request sent to renderer');
         return { success: true };
       } else {
@@ -331,6 +331,20 @@ app.whenReady().then(async () => {
       return { success: false, error: error.message };
     }
   });
+  // Add this to your existing IPC handlers in main.js
+  // Add this to main.js with your other IPC handlers
+  ipcMain.handle('documents:test-compatibility', async () => {
+    try {
+      if (documentStorage) {
+        return await documentStorage.testBackwardCompatibility();
+      }
+      return false;
+    } catch (error) {
+      console.error('❌ Compatibility test error:', error);
+      return false;
+    }
+  });
+
 
   // ✅ EXISTING: Keep all your other handlers (delete, duplicate, export, debug)
   ipcMain.handle('documents:delete', async (event, documentId) => {
@@ -343,25 +357,25 @@ app.whenReady().then(async () => {
     }
   });
   // Add this IPC handler for development testing
-ipcMain.handle('collaboration:test-dev', async (event, params) => {
-  console.log('🧪 DEV: Testing collaboration with params:', params);
-  
-  try {
-    if (collaborationService) {
-      const result = await collaborationService.startCollaboration(params.documentId, {
-        room: params.room, 
-        token: params.token
-      });
-      
-      console.log('🎯 DEV: Collaboration result:', result);
-      return result;
+  ipcMain.handle('collaboration:test-dev', async (event, params) => {
+    console.log('🧪 DEV: Testing collaboration with params:', params);
+
+    try {
+      if (collaborationService) {
+        const result = await collaborationService.startCollaboration(params.documentId, {
+          room: params.room,
+          token: params.token
+        });
+
+        console.log('🎯 DEV: Collaboration result:', result);
+        return result;
+      }
+      return { success: false, error: 'No collaboration service' };
+    } catch (error) {
+      console.error('❌ DEV: Collaboration test failed:', error);
+      return { success: false, error: error.message };
     }
-    return { success: false, error: 'No collaboration service' };
-  } catch (error) {
-    console.error('❌ DEV: Collaboration test failed:', error);
-    return { success: false, error: error.message };
-  }
-});
+  });
 
 
   ipcMain.handle('documents:duplicate', async (event, documentId, newTitle) => {
@@ -377,14 +391,14 @@ ipcMain.handle('collaboration:test-dev', async (event, params) => {
   ipcMain.handle('documents:debug', async (event, documentId) => {
     try {
       console.log('🔍 Debug request for document:', documentId);
-      
+
       const docPath = path.join(documentStorage.documentsPath, `${documentId}.json`);
       const exists = await fs.access(docPath).then(() => true).catch(() => false);
-      
+
       if (exists) {
         const data = await fs.readFile(docPath, 'utf-8');
         const doc = JSON.parse(data);
-        
+
         return {
           exists: true,
           fileSize: data.length,
@@ -394,7 +408,7 @@ ipcMain.handle('collaboration:test-dev', async (event, params) => {
           version: doc.version
         };
       }
-      
+
       return { exists: false };
     } catch (error) {
       console.error('❌ Debug error:', error);
@@ -415,7 +429,7 @@ ipcMain.handle('collaboration:test-dev', async (event, params) => {
             { name: 'All Files', extensions: ['*'] }
           ]
         });
-        
+
         if (filePath) {
           await fs.writeFile(filePath, result.content);
           return { success: true, path: filePath };

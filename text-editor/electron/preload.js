@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     chrome: process.versions.chrome,
     electron: process.versions.electron
   },
-  
+
   // Document persistence API
   documents: {
     create: (title) => ipcRenderer.invoke('documents:create', title),
@@ -19,7 +19,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     search: (query) => ipcRenderer.invoke('documents:search', query),
     delete: (documentId) => ipcRenderer.invoke('documents:delete', documentId),
     duplicate: (documentId, newTitle) => ipcRenderer.invoke('documents:duplicate', documentId, newTitle),
-    export: (documentId, format) => ipcRenderer.invoke('documents:export', documentId, format)
+    export: (documentId, format) => ipcRenderer.invoke('documents:export', documentId, format),
+    testCompatibility: () => ipcRenderer.invoke('documents:test-compatibility')
+
   },
 
   // ✅ FIXED: Collaboration protocol handling (moved inside contextBridge)
@@ -28,7 +30,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       callback(data);
     });
   },
-  
+
   removeJoinCollaborationListener: () => {
     ipcRenderer.removeAllListeners('join-collaboration');
   },
