@@ -1,5 +1,5 @@
 export const COLLABORATION_CONFIG = {
-  SIGNALING_SERVER:'wss://signaling-server-production-af26.up.railway.app',
+  SIGNALING_SERVER:'ws://localhost:3003/signal',
   
   WEB_CLIENT_URL: 'https://text-editor-nine-beta.vercel.app',
     

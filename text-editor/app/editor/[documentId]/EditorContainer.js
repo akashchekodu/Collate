@@ -1,6 +1,5 @@
-// app/editor/[documentId]/EditorContainer.js
 "use client"
-import { useEffect } from "react"
+import { useEffect, useCallback, useState } from "react"
 import { EditorContent } from "@tiptap/react"
 import { useYjsRoom } from "./hooks/useYjsRoom"
 import { useAwareness } from "./hooks/useAwareness"
@@ -10,372 +9,273 @@ import CollaborationStatus from "./components/CollaborationStatus"
 import EditorStyles from "./components/EditorStyles"
 import SaveIndicator from "./components/SaveIndicator"
 import ClientOnly from "./components/ClientOnly"
-import * as Y from 'yjs'
-import { getSafeYText, getSafeYTextContent, hasYTextField } from "@/utils/yjsUtils"
-
 
 function EditorContainerContent({ documentId, title = "Untitled Document" }) {
-  const roomName = documentId || "default-room"
+  const { ydoc, provider, isCollaborationMode, collaborationToken, standardFieldName } = useYjsRoom(documentId, { documentId, documentTitle: title })
+  const { editor, saveStatus, saveDocument, editorError, fieldName } = useCollaboration(ydoc, provider, documentId, title, standardFieldName)
+  const { peerCount, connectionStatus, activePeers } = useAwareness(provider, documentId)
 
-  const { ydoc, provider } = useYjsRoom(roomName)
-  const { peerCount, connectionStatus, activePeers } = useAwareness(provider, roomName)
-  
-  // ✅ Fixed: Include getYText in destructuring
-  const { editor, saveStatus, saveDocument, getYText } = useCollaboration(ydoc, provider, roomName, title)
+  // ✅ PROPER ERROR STATE MANAGEMENT
+  const [criticalError, setCriticalError] = useState(false)
+  const [warningCount, setWarningCount] = useState(0)
+  const [lastWarningTime, setLastWarningTime] = useState(0)
 
-// app/editor/[documentId]/EditorContainer.js - Safe debug function
-  const debugYjsState = () => {
-    if (!ydoc) {
-      console.warn('❌ Y.js document not ready');
-      return;
+  // ✅ COLLABORATION DEBUG (Development only)
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 Collaboration Status:', {
+        documentId: documentId.slice(0, 8) + '...',
+        isCollaborationMode,
+        hasToken: !!new URLSearchParams(window.location.search).get('token'),
+        expectedRoom: `collab-${documentId}`,
+        peerCount,
+        connectionStatus
+      });
     }
+  }, [documentId, isCollaborationMode, peerCount, connectionStatus]);
 
-    const fieldName = `editor-${documentId}`;
-    const content = getSafeYTextContent(ydoc, fieldName);
-    
-    console.log('🔍 Y.JS STATE DEBUG:');
-    console.log('📦 Document ID:', documentId);
-    console.log('📦 Field name:', fieldName);
-    console.log('📦 Field exists:', hasYTextField(ydoc, fieldName));
-    console.log('📦 Content length:', content.length);
-    console.log('📦 Content preview:', JSON.stringify(content.slice(0, 200)));
-    console.log('📦 All shared types:', Array.from(ydoc.share.keys()));
-  };
-
-  const debugTipTapContent = () => {
-  if (!editor || !ydoc) {
-    console.warn('❌ Editor or Y.js document not ready');
-    return;
-  }
-
-  try {
-    const fieldName = `editor-${documentId}`;
-    
-    // Get TipTap content in different formats
-    const editorText = editor.getText();
-    const editorHTML = editor.getHTML();
-    const editorJSON = editor.getJSON();
-    
-    console.log('🔍 TIPTAP CONTENT DEBUG:');
-    console.log('📝 Editor getText():', JSON.stringify(editorText.slice(0, 100)));
-    console.log('📝 Editor getHTML():', JSON.stringify(editorHTML.slice(0, 200)));
-    console.log('📝 Editor getJSON():', JSON.stringify(editorJSON, null, 2));
-    
-    // Check what's stored in Y.js
-    if (ydoc.share.has(fieldName)) {
-      const ytext = ydoc.share.get(fieldName);
-      const yjsContent = ytext.toString();
+  // ✅ LONG-TERM ERROR HANDLING: Classify errors properly
+  useEffect(() => {
+    const classifyAndHandleError = (event) => {
+      const error = event.error || event.reason;
+      const errorMessage = error?.message || error?.toString() || '';
       
-      console.log('📄 Y.js raw content type:', typeof yjsContent);
-      console.log('📄 Y.js raw content:', JSON.stringify(yjsContent));
+      // ✅ CATEGORY 1: CRDT Normal Operations (NOT errors)
+      const crdtNormalEvents = [
+        'Unexpected case',           // Normal TipTap collaboration conflict resolution
+        'Transform failed',         // Normal Y.js transform conflicts
+        'position mapping',         // Normal position adjustments during collaboration
+      ];
       
-      // Try to parse Y.js content
-      try {
-        const parsedContent = JSON.parse(yjsContent);
-        console.log('📄 Y.js parsed JSON:', JSON.stringify(parsedContent, null, 2));
-      } catch (error) {
-        console.log('📄 Y.js content is not JSON');
+      const isNormalCRDTEvent = crdtNormalEvents.some(pattern => 
+        errorMessage.includes(pattern)
+      );
+      
+      if (isNormalCRDTEvent) {
+        // ✅ SILENT: These are normal CRDT operations, not errors
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        return true;
       }
-    }
-    
-    // Test state encoding
-    const state = Y.encodeStateAsUpdate(ydoc);
-    console.log('📦 State size:', state.length, 'bytes');
-    
-  } catch (error) {
-    console.error('❌ Debug error:', error);
-  }
-}
 
-
-  // ✅ Fixed debug function with safe Y.Text access
-  const debugEditorContent = () => {
-    if (!editor || !ydoc) {
-      console.warn('❌ Editor or Y.js document not ready');
-      return;
-    }
-
-    try {
-      const editorText = editor.getText();
-      const editorHTML = editor.getHTML();
-      const fieldName = `editor-${documentId}`;
+      // ✅ CATEGORY 2: Collaboration Warnings (Monitor but don't break)
+      const collaborationWarnings = [
+        'out of sync',
+        'Invalid content',
+        'position out of range',
+        'collaboration conflict'
+      ];
       
-      // ✅ Safe Y.Text access with multiple fallbacks
-      let yjsText = '';
-      try {
-        if (getYText) {
-          const ytext = getYText();
-          yjsText = ytext ? ytext.toString() : '';
-        } else {
-          // Fallback: direct access
-          if (ydoc.share && ydoc.share.has(fieldName)) {
-            yjsText = ydoc.share.get(fieldName).toString();
-          } else {
-            const ytext = ydoc.getText(fieldName);
-            yjsText = ytext.toString();
-          }
-        }
-      } catch (error) {
-        console.error('❌ Error accessing Y.Text:', error);
-        yjsText = '[ERROR]';
-      }
+      const isCollaborationWarning = collaborationWarnings.some(pattern => 
+        errorMessage.includes(pattern)
+      );
       
-      console.log('🔍 CONTENT DEBUG:');
-      console.log('📝 TipTap text:', JSON.stringify(editorText.slice(0, 100)));
-      console.log('📝 TipTap HTML:', JSON.stringify(editorHTML.slice(0, 200)));
-      console.log('📄 Y.js field:', fieldName);
-      console.log('📄 Y.js text:', JSON.stringify(yjsText.slice(0, 100)));
-      console.log('📊 TipTap length:', editorText.length);
-      console.log('📊 Y.js length:', yjsText.length);
-      console.log('🔗 Contents match:', editorText === yjsText);
-      
-      // Check Y.js state
-      try {
-        const state = Y.encodeStateAsUpdate(ydoc);
-        console.log('📦 Y.js state size:', state.length, 'bytes');
+      if (isCollaborationWarning) {
+        const now = Date.now();
+        const timeSinceLastWarning = now - lastWarningTime;
         
-        // Test state reconstruction
-        if (state.length > 0) {
-          const tempDoc = new Y.Doc();
-          Y.applyUpdate(tempDoc, state);
-          const reconstructedText = tempDoc.getText(fieldName).toString();
-          console.log('🔄 Reconstructed text:', JSON.stringify(reconstructedText.slice(0, 100)));
-        }
-      } catch (error) {
-        console.error('❌ Error getting Y.js state:', error);
-      }
-      
-      // Analyze sync issues
-      if (editorText.length > 0 && yjsText.length === 0) {
-        console.error('❌ SYNC ISSUE: Editor has content but Y.js is empty!');
-        console.log('🔧 This indicates TipTap → Y.js sync is broken');
-      } else if (editorText.length === 0 && yjsText.length > 0) {
-        console.error('❌ SYNC ISSUE: Y.js has content but editor is empty!');
-        console.log('🔧 This indicates Y.js → TipTap sync is broken');
-      } else if (editorText.length === 0 && yjsText.length === 0) {
-        console.warn('⚠️ Both editor and Y.js are empty - type some content first');
-      } else {
-        console.log('✅ Content sync looks good!');
-      }
-      
-    } catch (error) {
-      console.error('❌ Debug function error:', error);
-    }
-  };
-
-  // ✅ Fixed force sync function
-const forceContentSync = () => {
-  if (!editor || !ydoc) {
-    console.error('❌ Editor or Y.js not ready for sync');
-    return;
-  }
-
-  try {
-    // ✅ Fixed: Ensure editorContent is a string
-    const editorContent = editor.getText();
-    const fieldName = `editor-${documentId}`;
-    
-    console.log('🔧 FORCING CONTENT SYNC:');
-    console.log('📝 Editor content type:', typeof editorContent);
-    console.log('📝 Editor content:', JSON.stringify(editorContent.slice(0, 100)));
-    
-    // ✅ Type validation
-    if (typeof editorContent !== 'string') {
-      console.error('❌ Editor content is not a string:', typeof editorContent);
-      return;
-    }
-    
-    // ✅ Safe Y.Text access
-    let ytext;
-    try {
-      if (getYText) {
-        ytext = getYText();
-      } else {
-        if (ydoc.share && ydoc.share.has(fieldName)) {
-          ytext = ydoc.share.get(fieldName);
+        // ✅ RATE LIMITING: Only count frequent warnings as concerning
+        if (timeSinceLastWarning < 1000) { // Less than 1 second apart
+          setWarningCount(prev => {
+            const newCount = prev + 1;
+            
+            // ✅ THRESHOLD: Only show concern after many rapid warnings
+            if (newCount >= 20) { // Much higher threshold
+              console.warn('⚠️ High frequency collaboration warnings detected');
+              // Don't break the editor, just log
+            }
+            
+            return newCount;
+          });
         } else {
-          ytext = ydoc.getText(fieldName);
+          // ✅ RESET: Reset counter if warnings aren't frequent
+          setWarningCount(1);
         }
+        
+        setLastWarningTime(now);
+        event.preventDefault?.();
+        return true;
+      }
+
+      // ✅ CATEGORY 3: Critical Errors (Actually break functionality)
+      const criticalErrors = [
+        'Network error',
+        'Failed to connect',
+        'WebSocket error',
+        'Document corrupted',
+        'Unable to sync'
+      ];
+      
+      const isCriticalError = criticalErrors.some(pattern => 
+        errorMessage.includes(pattern)
+      );
+      
+      if (isCriticalError) {
+        console.error('🚨 Critical collaboration error:', errorMessage);
+        setCriticalError(true);
+        return true;
+      }
+
+      // ✅ DEFAULT: Let other errors pass through normally
+      return false;
+    };
+
+    // ✅ CAPTURE PHASE: Intercept early to prevent UI disruption
+    window.addEventListener('error', classifyAndHandleError, true);
+    window.addEventListener('unhandledrejection', classifyAndHandleError, true);
+    
+    return () => {
+      window.removeEventListener('error', classifyAndHandleError, true);
+      window.removeEventListener('unhandledrejection', classifyAndHandleError, true);
+    };
+  }, [lastWarningTime]);
+
+  // ✅ RESET ERROR STATE: When document changes or recovers
+  useEffect(() => {
+    setCriticalError(false);
+    setWarningCount(0);
+    setLastWarningTime(0);
+  }, [documentId]);
+
+  // ✅ AUTO RECOVERY: Reset critical error state after timeout
+  useEffect(() => {
+    if (criticalError) {
+      const recoveryTimer = setTimeout(() => {
+        console.log('🔄 Attempting auto-recovery from critical error');
+        setCriticalError(false);
+        setWarningCount(0);
+      }, 10000); // 10 seconds
+
+      return () => clearTimeout(recoveryTimer);
+    }
+  }, [criticalError]);
+
+  // ✅ ENHANCED RESET: More intelligent reset
+  const resetEditor = useCallback(() => {
+    console.log('🔄 Intelligent editor reset');
+    
+    // ✅ SOFT RESET: Try to recover without full reload
+    setCriticalError(false);
+    setWarningCount(0);
+    setLastWarningTime(0);
+    
+    // ✅ ONLY RELOAD: If we have a real critical error
+    if (editorError || !editor) {
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    }
+  }, [editorError, editor]);
+
+  // ✅ SHARE FUNCTION
+  const handleShareDocument = useCallback(async () => {
+    try {
+      const { collaborationService } = await import('../../services/collabService')
+      const linkData = await collaborationService.generateCollaborationLink(documentId)
+      
+      if (linkData?.url) {
+        await navigator.clipboard.writeText(linkData.url)
+        alert(`Collaboration link copied!\n\n${linkData.url}`)
+      } else {
+        alert('Failed to generate collaboration link.')
       }
     } catch (error) {
-      console.error('❌ Error getting Y.Text for sync:', error);
-      return;
+      console.error('Share error:', error)
+      alert(`Error: ${error.message}`)
     }
+  }, [documentId]);
 
-    if (ytext) {
-      console.log('📄 Y.js content before:', JSON.stringify(ytext.toString().slice(0, 100)));
-      
-      // ✅ Clear and insert string content
-      ytext.delete(0, ytext.length);
-      if (editorContent.length > 0) {
-        ytext.insert(0, editorContent); // Insert string directly
-      }
-      
-      console.log('📄 Y.js content after:', JSON.stringify(ytext.toString().slice(0, 100)));
-      console.log('✅ Force sync complete');
-    }
-  } catch (error) {
-    console.error('❌ Force sync failed:', error);
-    console.error('Error details:', error.stack);
-  }
-};
-
-// ✅ Fixed test save operation
-  const testSaveOperation = async () => {
-    console.log('🧪 TESTING SAVE OPERATION:');
-    debugEditorContent();
-    
-    if (ydoc) {
-      const state = Y.encodeStateAsUpdate(ydoc);
-      console.log('📦 Sending state to save (size):', state.length);
-      console.log('📦 State array preview:', Array.from(state).slice(0, 20));
-      
-      try {
-        await saveDocument();
-        console.log('✅ Save operation completed - check Electron console for storage logs');
-      } catch (error) {
-        console.error('❌ Save operation failed:', error);
-      }
-    }
-  };
-
-  // ✅ Monitor editor updates with safe Y.Text access
-  useEffect(() => {
-    if (editor && ydoc) {
-      const handleUpdate = ({ editor, transaction }) => {
-        if (transaction.docChanged) {
-          const content = editor.getText();
-          console.log('📝 Editor updated - content length:', content.length);
-          
-          // Check Y.js content after editor update
-          try {
-            const fieldName = `editor-${documentId}`;
-            let yjsContent = '';
-            
-            if (getYText) {
-              const ytext = getYText();
-              yjsContent = ytext ? ytext.toString() : '';
-            } else {
-              if (ydoc.share && ydoc.share.has(fieldName)) {
-                yjsContent = ydoc.share.get(fieldName).toString();
-              }
-            }
-            
-            console.log('📄 Y.js content after editor update:', yjsContent.length);
-            
-            if (content.length !== yjsContent.length) {
-              console.warn('⚠️ SYNC MISMATCH after editor update!');
-              console.log('📝 Editor length:', content.length, '📄 Y.js length:', yjsContent.length);
-            }
-          } catch (error) {
-            console.warn('❌ Error checking Y.js content after editor update:', error);
-          }
-        }
-      };
-
-      editor.on('update', handleUpdate);
-      
-      return () => {
-        editor.off('update', handleUpdate);
-      };
-    }
-  }, [editor, ydoc, documentId, getYText]);
-
-  useEffect(() => {
-    const handleError = (event) => {
-      if (
-        event.error?.message?.includes("Unexpected case") &&
-        event.error?.stack?.includes("createAbsolutePositionFromRelativePosition")
-      ) {
-        console.warn("CollaborationCaret position mapping error suppressed:", event.error.message)
-        event.preventDefault()
-        return false
-      }
-    }
-
-    window.addEventListener("error", handleError)
-    return () => window.removeEventListener("error", handleError)
-  }, [])
-
-  // Handle manual save with Ctrl+S
+  // ✅ KEYBOARD SHORTCUTS
   useEffect(() => {
     const handleKeydown = (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 's') {
         event.preventDefault()
-        console.log('💾 Manual save triggered (Ctrl+S)')
         saveDocument()
       }
     }
 
     window.addEventListener('keydown', handleKeydown)
     return () => window.removeEventListener('keydown', handleKeydown)
-  }, [saveDocument])
+  }, [saveDocument]);
 
-  useEffect(() => {
-    return () => {
-      try {
-        editor?.destroy()
-      } catch (_) {}
-    }
-  }, [editor])
+  // ✅ SMART ERROR DISPLAY: Only show for actual critical issues
+  const shouldShowErrorUI = criticalError || (editorError && !editor);
+  const shouldShowWarning = warningCount > 10 && warningCount < 20;
 
   return (
     <>
       <EditorStyles />
       <div className="h-full flex flex-col bg-gray-50">
         <div className="flex-1 mx-4 my-2 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden">
+          
+          {/* ✅ ENHANCED MODE INDICATOR */}
+          <div className="border-b bg-gray-50 px-4 py-2 text-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="font-medium">
+                  {isCollaborationMode ? '🤝 Collaboration Mode' : '📝 Solo Mode'}
+                </span>
+                {isCollaborationMode && (
+                  <span className="text-green-600 font-medium">
+                    {peerCount} {peerCount === 1 ? 'collaborator' : 'collaborators'} connected
+                  </span>
+                )}
+                
+                {/* ✅ SMART WARNING: Only show for concerning patterns */}
+                {shouldShowWarning && (
+                  <span className="text-yellow-600 font-medium">
+                    ⚠️ Collaboration active
+                  </span>
+                )}
+                
+                {criticalError && (
+                  <span className="text-red-600 font-medium">
+                    ❌ Connection Issue
+                  </span>
+                )}
+              </div>
+              
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <span>Field: <code>{(standardFieldName || `editor-${documentId}`).slice(0, 20)}...</code></span>
+                {isCollaborationMode && (
+                  <span>Room: <code>collab-{documentId.slice(0, 8)}...</code></span>
+                )}
+              </div>
+            </div>
+          </div>
+
           <CollaborationStatus
             peerCount={peerCount}
             activePeers={activePeers}
             connectionStatus={connectionStatus}
             ydoc={ydoc}
             provider={provider}
-            roomName={roomName}
+            roomName={documentId}
           />
 
-          {/* Enhanced toolbar with save indicator and debug buttons */}
+          {/* ✅ TOOLBAR */}
           <div className="flex items-center justify-between border-b bg-muted/20">
             <div className="flex items-center gap-2">
               <EditorToolbar editor={editor} />
               
-              {/* ✅ Debug buttons - only in development */}
-              {process.env.NODE_ENV === 'development' && editor && ydoc && (
-                
-                <div className="flex gap-1 ml-4 border-l pl-4">
+              <div className="ml-4 border-l pl-4">
+                <button
+                  onClick={handleShareDocument}
+                  className="px-3 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 transition-colors"
+                >
+                  🔗 Share
+                </button>
+              </div>
+              
+              {/* ✅ DEVELOPMENT TOOLS */}
+              {process.env.NODE_ENV === 'development' && criticalError && (
+                <div className="ml-4 border-l pl-4">
                   <button
-                    onClick={debugTipTapContent}
-                    className="px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
-                    title="Debug TipTap content structure"
+                    onClick={resetEditor}
+                    className="px-2 py-1 bg-orange-600 text-white text-xs rounded hover:bg-orange-700"
+                    title="Reset collaboration"
                   >
-                    🔬 TipTap Debug
-                  </button>
-                  <button
-                    onClick={debugYjsState}
-                    className="px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
-                    title="Debug Y.js state and reconstruction"
-                  >
-                    🔬 Y.js Debug
-                  </button>
-                  <button
-                    onClick={debugEditorContent}
-                    className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors"
-                    title="Debug content sync between TipTap and Y.js"
-                  >
-                    🔍 Debug
-                  </button>
-                  <button
-                    onClick={forceContentSync}
-                    className="px-2 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 transition-colors"
-                    title="Force sync editor content to Y.js"
-                  >
-                    🔧 Sync
-                  </button>
-                  <button
-                    onClick={testSaveOperation}
-                    className="px-2 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors"
-                    title="Test save operation with current content"
-                  >
-                    💾 Test Save
+                    🔄 Reset
                   </button>
                 </div>
               )}
@@ -386,8 +286,37 @@ const forceContentSync = () => {
             </div>
           </div>
 
+          {/* ✅ SMART EDITOR CONTENT: Only break for real issues */}
           <div className="flex-1 overflow-auto">
-            {editor ? (
+            {shouldShowErrorUI ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center space-y-4">
+                  <div className="text-red-500 text-lg">🔌 Connection Issue</div>
+                  <p className="text-gray-600 max-w-md">
+                    Unable to maintain collaboration connection. This may be due to network issues or server problems.
+                  </p>
+                  <div className="space-y-2 text-sm text-gray-500">
+                    <p>Status: {connectionStatus}</p>
+                    <p>Collaboration mode: {isCollaborationMode ? 'Active' : 'Disabled'}</p>
+                    <p>Connected peers: {peerCount}</p>
+                  </div>
+                  <div className="space-x-2">
+                    <button
+                      onClick={resetEditor}
+                      className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                    >
+                      🔄 Retry Connection
+                    </button>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+                    >
+                      🔄 Reload Page
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : editor ? (
               <EditorContent
                 editor={editor}
                 className="h-full w-full p-6 [&_.ProseMirror]:min-h-full [&_.ProseMirror]:outline-none [&_.ProseMirror]:border-none"
@@ -397,21 +326,30 @@ const forceContentSync = () => {
               <div className="flex items-center justify-center h-full">
                 <div className="flex flex-col items-center gap-4">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                  <p className="text-muted-foreground">Loading document...</p>
+                  <p className="text-muted-foreground">Loading editor...</p>
+                  {process.env.NODE_ENV === 'development' && (
+                    <div className="text-xs text-gray-500 text-center space-y-1">
+                      <p>Y.js: {!!ydoc ? '✅' : '⏳'}</p>
+                      <p>Provider: {!!provider ? '✅' : '⏳'}</p>
+                      <p>Editor: {!!editor ? '✅' : '⏳'}</p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
           </div>
 
-          {/* ✅ Development info panel */}
+          {/* ✅ DEVELOPMENT INFO */}
           {process.env.NODE_ENV === 'development' && (
             <div className="border-t bg-gray-50 p-2 text-xs text-gray-600">
               <div className="flex items-center justify-between">
-                <span>Document ID: <code>{documentId}</code></span>
-                <span>Field: <code>editor-{documentId}</code></span>
-                <span>Save Status: <code>{saveStatus}</code></span>
-                <span>Y.js Ready: <code>{!!ydoc}</code></span>
-                <span>Editor Ready: <code>{!!editor}</code></span>
+                <span>Document: <code>{documentId.slice(0, 8)}...</code></span>
+                <span>Y.js: <code>{!!ydoc ? 'Ready' : 'Loading'}</code></span>
+                <span>Editor: <code>{!!editor ? 'Ready' : 'Loading'}</code></span>
+                <span>Mode: <code>{isCollaborationMode ? 'Collab' : 'Solo'}</code></span>
+                <span>Peers: <code>{peerCount}</code></span>
+                <span>Warnings: <code>{warningCount}</code></span>
+                <span>Status: <code>{criticalError ? 'Error' : shouldShowWarning ? 'Warning' : 'OK'}</code></span>
               </div>
             </div>
           )}
@@ -423,26 +361,7 @@ const forceContentSync = () => {
 
 export default function EditorContainer({ documentId, title }) {
   return (
-    <ClientOnly
-      fallback={
-        <div className="min-h-[90vh] flex flex-col">
-          <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/20">
-            <div className="h-4 w-24 bg-muted animate-pulse rounded" />
-            <div className="h-4 w-16 bg-muted animate-pulse rounded" />
-          </div>
-          <div className="border-b bg-muted/10 p-3">
-            <div className="flex items-center gap-1">
-              <div className="h-8 w-8 bg-muted animate-pulse rounded" />
-              <div className="h-8 w-8 bg-muted animate-pulse rounded" />
-              <div className="h-8 w-8 bg-muted animate-pulse rounded" />
-            </div>
-          </div>
-          <div className="flex-1 flex items-center justify-center min-h-[600px]">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-          </div>
-        </div>
-      }
-    >
+    <ClientOnly fallback={<div>Loading...</div>}>
       <EditorContainerContent documentId={documentId} title={title} />
     </ClientOnly>
   )

@@ -55,7 +55,7 @@ app.get('/collaborate', (req, res) => {
           // Initialize Y.js
           const ydoc = new Y.Doc();
           const provider = new WebrtcProvider(room, ydoc, {
-            signaling: ['wss://signaling-server-production-af26.up.railway.app/signal?token=' + token]
+            signaling: ['ws://localhost:3003/signal?token=' + token]
           });
           
           const ytext = ydoc.getText('content');

@@ -1,4 +1,4 @@
-// app/editor/[documentId]/utils/constants.js
+// app/editor/[documentId]/utils/constants.js - ENHANCED with validation
 export const ANIMAL_USERS = [
   { name: "🦁 Lion", color: "#F59E0B" },
   { name: "🐸 Frog", color: "#10B981" },
@@ -32,12 +32,53 @@ export const ANIMAL_USERS = [
   { name: "🦕 Dinosaur", color: "#16A34A" },
 ];
 
-// Dynamic configuration based on collaboration setup
-export const getWebRTCConfig = (token = null) => ({
-  signaling: token 
-    ? [`wss://signaling-server-production-af26.up.railway.app/signal?token=${token}`]
-    : ["wss://signaling-server-production-af26.up.railway.app/signal"],
-  maxConn: 20,
+/**
+ * Generate WebRTC configuration for collaboration
+ * @param {string|null} token - JWT token for authenticated collaboration
+ * @returns {object} WebRTC configuration
+ */
+/**
+ * Generate WebRTC configuration with optional token - FIXED
+ */
+function getWebRTCConfig(token = null) {
+  console.log('🔧 Generating WebRTC config:', {
+    hasToken: !!token,
+    tokenLength: token?.length || 0,
+    timestamp: new Date().toISOString()
+  });
+
+  const baseConfig = {
+    // ✅ CRITICAL FIX: Ensure token is properly appended
+    signaling: token 
+      ? [`ws://localhost:3003/signal?token=${encodeURIComponent(token)}`]
+      : ["ws://localhost:3003/signal"],
+    maxConn: 20,
+    filterBcConns: true,
+    peerOpts: {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' }
+        ]
+      }
+    }
+  };
+
+  console.log('🔧 WebRTC config generated:', {
+    signalingUrl: baseConfig.signaling[0],
+    hasTokenInUrl: baseConfig.signaling[0].includes('token='),
+    config: baseConfig
+  });
+
+  return baseConfig;
+}
+
+/**
+ * Default WebRTC configuration for non-collaborative documents
+ */
+export const DEFAULT_WEBRTC_CONFIG = {
+  signaling: ['ws://localhost:4444'], // Always use local Y.js for non-collaborative
+  maxConns: 20,
   filterBcConns: true,
   peerOpts: {
     config: {
@@ -47,7 +88,21 @@ export const getWebRTCConfig = (token = null) => ({
       ]
     }
   }
-});
+};
 
-// Fallback for existing usage
-export const WEBRTC_CONFIG = getWebRTCConfig();
+/**
+ * Helper function to determine server type from config
+ */
+export const getServerType = (token) => {
+  return token ? 'custom-authenticated' : 'local-yjs';
+};
+
+/**
+ * ✅ NEW: Validate room name before using
+ */
+export const validateRoomName = (roomName) => {
+  if (!roomName || roomName === 'undefined' || roomName === 'null' || typeof roomName !== 'string') {
+    return false;
+  }
+  return roomName.trim().length > 0;
+};

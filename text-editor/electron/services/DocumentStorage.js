@@ -48,10 +48,10 @@ class DocumentStorage {
 
   // Generate unique document ID
   generateDocumentId() {
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).substr(2, 9);
-    return `${timestamp}-${random}`;
+  const crypto = require('crypto');
+  return crypto.randomUUID();
   }
+
 
   async updateDocumentTitle(documentId, newTitle) {
   try {

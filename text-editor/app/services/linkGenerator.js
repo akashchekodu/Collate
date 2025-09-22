@@ -3,10 +3,10 @@ import { nanoid } from 'nanoid';
 // JWT_SECRET must match signaling server
 const JWT_SECRET = '41db8ba3fa459485fc41b2a98a2d705ea32ffe41600200506949fb70f5046f02db54eeff';
 
-// Configuration
+// Configuration - UPDATED for unified architecture
 export const COLLABORATION_CONFIG = {
-  SIGNALING_SERVER: 'wss://signaling-server-production-af26.up.railway.app',
-  WEB_CLIENT_URL: 'https://text-editor-nine-beta.vercel.app',
+  SIGNALING_SERVER: 'ws://localhost:3003/signal',
+  WEB_CLIENT_URL: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000',
   TOKEN_EXPIRY: {
     PERMANENT: 30 * 24 * 60 * 60 * 1000, // 30 days
     INVITATION: 7 * 24 * 60 * 60 * 1000   // 7 days
@@ -55,89 +55,64 @@ export class LinkGenerator {
     console.log('🔗 LinkGenerator initialized:', {
       isElectron: this.isElectron,
       hasElectronJWT: this.isElectron && !!window.electronAPI?.generateJWT,
+      baseUrl: COLLABORATION_CONFIG.WEB_CLIENT_URL,
       jwtSecret: JWT_SECRET.substring(0, 10) + '...'
     });
   }
 
   /**
-   * Generate a proper JWT token with peerId and real signature
-   * @param {Object} payload - The JWT payload
-   * @returns {Promise<string>} - The signed JWT token
+   * Generate a proper JWT token with unified architecture payload
    */
   async generateValidToken(payload) {
-    // ✅ ALWAYS include peerId field (required by server)
+    // ✅ UPDATED: Simplified payload for unified architecture
     const enhancedPayload = {
-      ...payload,
+      documentId: payload.documentId,          // Document GUID
+      roomId: `collab-${payload.documentId}`,  // Collaboration room
+      fieldName: `editor-${payload.documentId}`, // Y.js field name
+      permissions: payload.permissions || ['read', 'write'],
       peerId: payload.peerId || generatePeerId(),
+      type: payload.type || 'collaboration',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + (payload.expiryHours || 24 * 30) * 3600, // 30 days default
+      dev: true
     };
     
-    console.log('🔍 Generated token payload with peerId:', enhancedPayload);
+    console.log('🔍 Generated unified token payload:', enhancedPayload);
     
     const header = { 
-      alg: 'HS256',  // ✅ SECURE: Use proper algorithm
+      alg: 'HS256',
       typ: 'JWT' 
     };
 
     const encodedHeader = base64urlEncode(JSON.stringify(header));
     const encodedPayload = base64urlEncode(JSON.stringify(enhancedPayload));
     
-    // ✅ SECURE: Create real signature using JWT_SECRET
     const signature = await hmacSha256(JWT_SECRET, `${encodedHeader}.${encodedPayload}`);
     
     const finalToken = `${encodedHeader}.${encodedPayload}.${signature}`;
-    console.log('✅ Generated valid JWT token:', finalToken.substring(0, 50) + '...');
+    console.log('✅ Generated unified JWT token:', finalToken.substring(0, 50) + '...');
     
     return finalToken;
   }
 
   /**
-   * Fallback simple token for development ONLY - NOT SECURE
-   * @param {Object} payload - The JWT payload
-   * @returns {string} - The unsigned JWT token
+   * Generate a collaboration link using unified architecture
    */
-  generateSimpleToken(payload) {
-    console.warn('🚨 Using INSECURE simple token - for development only!');
-    
-    const header = {
-      alg: 'none',
-      typ: 'JWT'
-    };
-
-    const encodedHeader = btoa(JSON.stringify(header));
-    const encodedPayload = btoa(JSON.stringify(payload));
-    const signature = btoa(`dev-signature-${Date.now()}`);
-    
-    return `${encodedHeader}.${encodedPayload}.${signature}`;
-  }
-
-  /**
-   * Generate a permanent collaboration link
-   * @param {string} documentId - The document ID
-   * @param {string} roomId - Optional room ID (will be generated if not provided)
-   * @param {string[]} permissions - Array of permissions ['read', 'write']
-   * @returns {Promise<Object>} - The permanent link object
-   */
-  async generatePermanentLink(documentId, roomId = null, permissions = ['read', 'write']) {
+  async generateCollaborationLink(documentId, permissions = ['read', 'write'], expiryHours = 24 * 30) {
     if (!this.initialized) this.initialize();
     
-    if (!roomId) roomId = generateRoomId();
-    const linkId = `perm_${nanoid(10)}`;
+    console.log('🔗 Generating collaboration link for document:', documentId);
 
     const payload = {
-      type: 'permanent',
-      linkId,
-      roomId,
-      documentId,
-      permissions,
-      exp: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60), // 30 days
-      iat: Math.floor(Date.now() / 1000),
-      dev: true
+      documentId: documentId,
+      permissions: permissions,
+      type: 'collaboration',
+      expiryHours: expiryHours
     };
 
     let token;
     
     if (this.isElectron && window.electronAPI?.generateJWT) {
-      // Use Electron main process for secure JWT generation
       try {
         console.log('🔐 Using Electron JWT generation');
         token = await window.electronAPI.generateJWT(payload);
@@ -146,91 +121,46 @@ export class LinkGenerator {
         token = await this.generateValidToken(payload);
       }
     } else {
-      // Use browser JWT generation with proper signature
       console.log('🌐 Using browser JWT generation');
       token = await this.generateValidToken(payload);
     }
 
-    const url = `${COLLABORATION_CONFIG.WEB_CLIENT_URL}/join?room=${roomId}&token=${token}&doc=${documentId}`;
+    // ✅ UPDATED: Use unified architecture URL structure
+    const url = `${COLLABORATION_CONFIG.WEB_CLIENT_URL}/editor/${documentId}?token=${token}`;
 
     const linkData = {
-      type: 'permanent',
-      linkId,
-      roomId,
-      url,
-      token,
-      permissions,
-      expiresAt: Date.now() + COLLABORATION_CONFIG.TOKEN_EXPIRY.PERMANENT,
+      documentId: documentId,
+      url: url,
+      token: token,
+      permissions: permissions,
+      roomId: `collab-${documentId}`,
+      fieldName: `editor-${documentId}`,
+      expiresAt: Date.now() + (expiryHours * 60 * 60 * 1000),
       createdAt: Date.now()
     };
 
-    console.log('✅ Generated permanent link:', linkData.linkId);
+    console.log('✅ Generated collaboration link:', url);
     return linkData;
   }
 
   /**
-   * Generate an invitation collaboration link
-   * @param {string} documentId - The document ID
-   * @param {string} roomId - The room ID to join
-   * @param {string[]} permissions - Array of permissions ['read', 'write']
-   * @param {string} recipientName - Optional recipient name
-   * @returns {Promise<Object>} - The invitation link object
+   * Generate a permanent collaboration link (30 days)
+   */
+  async generatePermanentLink(documentId, roomId = null, permissions = ['read', 'write']) {
+    console.log('🔗 Generating permanent link for document:', documentId);
+    return await this.generateCollaborationLink(documentId, permissions, 24 * 30); // 30 days
+  }
+
+  /**
+   * Generate an invitation collaboration link (7 days)
    */
   async generateInvitationLink(documentId, roomId, permissions = ['read', 'write'], recipientName = null) {
-    if (!this.initialized) this.initialize();
-    
-    const invitationId = `invite_${nanoid(10)}`;
-
-    const payload = {
-      type: 'invitation',
-      invitationId,
-      roomId,
-      documentId,
-      permissions,
-      exp: Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60), // 7 days
-      iat: Math.floor(Date.now() / 1000),
-      singleUse: true,
-      dev: true
-    };
-
-    let token;
-    
-    if (this.isElectron && window.electronAPI?.generateJWT) {
-      try {
-        console.log('🔐 Using Electron JWT generation for invitation');
-        token = await window.electronAPI.generateJWT(payload);
-      } catch (error) {
-        console.warn('Electron JWT generation failed, using browser JWT:', error);
-        token = await this.generateValidToken(payload);
-      }
-    } else {
-      console.log('🌐 Using browser JWT generation for invitation');
-      token = await this.generateValidToken(payload);
-    }
-
-    const url = `${COLLABORATION_CONFIG.WEB_CLIENT_URL}/join?invite=${invitationId}&token=${token}&doc=${documentId}`;
-
-    const invitationData = {
-      type: 'invitation',
-      invitationId,
-      roomId,
-      url,
-      token,
-      permissions,
-      recipientName,
-      expiresAt: Date.now() + COLLABORATION_CONFIG.TOKEN_EXPIRY.INVITATION,
-      createdAt: Date.now(),
-      used: false
-    };
-
-    console.log('✅ Generated invitation link:', invitationData.invitationId);
-    return invitationData;
+    console.log('🔗 Generating invitation link for document:', documentId);
+    return await this.generateCollaborationLink(documentId, permissions, 24 * 7); // 7 days
   }
 
   /**
    * Decode a JWT token to inspect its contents
-   * @param {string} token - The JWT token to decode
-   * @returns {Object|null} - Decoded token with header and payload, or null if invalid
    */
   decodeToken(token) {
     try {
@@ -253,8 +183,6 @@ export class LinkGenerator {
 
   /**
    * Validate if a token is expired
-   * @param {string} token - The JWT token to check
-   * @returns {boolean} - True if token is valid and not expired
    */
   isTokenValid(token) {
     const decoded = this.decodeToken(token);

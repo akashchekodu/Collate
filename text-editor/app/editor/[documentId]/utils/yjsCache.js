@@ -1,10 +1,7 @@
 import * as Y from "yjs";
 import { WebrtcProvider } from "y-webrtc";
-import { WEBRTC_CONFIG } from "./constants";
+import { Awareness } from 'y-protocols/awareness';
 
-/**
- * Global cache on window to avoid duplicate Y.Doc/Provider instances.
- */
 function getGlobalCache() {
   if (typeof window === "undefined") return null;
   if (!window.__yjs) {
@@ -17,14 +14,11 @@ function getGlobalCache() {
   return window.__yjs;
 }
 
-/**
- * Generate WebRTC configuration with optional token
- */
 function getWebRTCConfig(token = null) {
   const baseConfig = {
     signaling: token 
-      ? [`wss://signaling-server-production-af26.up.railway.app/signal?token=${token}`]
-      : ["wss://signaling-server-production-af26.up.railway.app/signal"],
+      ? [`ws://localhost:3003/signal?token=${encodeURIComponent(token)}`]
+      : ["ws://localhost:3003/signal"],
     maxConn: 20,
     filterBcConns: true,
     peerOpts: {
@@ -37,153 +31,172 @@ function getWebRTCConfig(token = null) {
     }
   };
 
-  // Merge with any existing WEBRTC_CONFIG
+  return baseConfig;
+}
+
+function createLocalProvider(ydoc) {
   return {
-    ...WEBRTC_CONFIG,
-    ...baseConfig
+    awareness: new Awareness(ydoc),
+    connected: true,
+    connect: () => {},
+    disconnect: () => {},
+    destroy: () => {},
+    on: (event, callback) => {
+      if (event === 'status') {
+        setTimeout(() => callback({ status: 'connected' }), 0);
+      }
+    },
+    off: () => {},
+    emit: () => {}
   };
 }
 
-export function ensureRoom(roomName, options = {}) {
-  // Add this right before: provider = new WebrtcProvider(roomName, ydoc, config);
-
-
+// ✅ WORKING VERSION - Restore text sync first
+export function ensureRoom(documentId, options = {}) {
   const cache = getGlobalCache();
+  
   if (!cache) {
     const ydoc = new Y.Doc();
-    const config = options.token ? getWebRTCConfig(options.token) : getWebRTCConfig();
-    const provider = new WebrtcProvider(roomName, ydoc, config);
-    return { ydoc, provider, created: true };
+    let provider;
+    
+    if (options.enableWebRTC && options.token) {
+      const config = getWebRTCConfig(options.token);
+      const roomName = `collab-${documentId}`;
+      provider = new WebrtcProvider(roomName, ydoc, config);
+    } else {
+      provider = createLocalProvider(ydoc);
+    }
+    
+    return { ydoc, provider, created: true, standardFieldName: `editor-${documentId}` };
   }
+
+  // ✅ BACK TO ORIGINAL: Use mode in cache key to prevent conflicts
+  const cacheKey = options.enableWebRTC ? 
+    `${documentId}_webrtc_${options.token || 'none'}` : 
+    `${documentId}_local`;
   
-  // Use token-specific cache key if token provided
-  const cacheKey = options.token ? `${roomName}_authenticated` : roomName;
+  console.log('🔍 RESTORED CACHE STRATEGY:', {
+    documentId: documentId.slice(0, 8) + '...',
+    cacheKey,
+    enableWebRTC: options.enableWebRTC,
+    hasToken: !!options.token,
+    exists: cache.docs.has(cacheKey)
+  });
   
+  // ✅ REUSE: Existing document
   if (cache.docs.has(cacheKey) && cache.providers.has(cacheKey)) {
+    const existingProvider = cache.providers.get(cacheKey);
+    const existingDoc = cache.docs.get(cacheKey);
+    
     cache.refs.set(cacheKey, (cache.refs.get(cacheKey) || 0) + 1);
+    
+    console.log('♻️ Reusing existing document and provider');
     return { 
-      ydoc: cache.docs.get(cacheKey), 
-      provider: cache.providers.get(cacheKey), 
-      created: false 
+      ydoc: existingDoc, 
+      provider: existingProvider, 
+      created: false,
+      standardFieldName: `editor-${documentId}`
     };
   }
 
-
-
+  // ✅ CREATE: Fresh document
   const ydoc = new Y.Doc();
   let provider;
   
   try {
-    const config = options.token ? getWebRTCConfig(options.token) : getWebRTCConfig();
+    if (options.enableWebRTC && options.token) {
+      const config = getWebRTCConfig(options.token);
+      const roomName = `collab-${documentId}`;
+      
+      provider = new WebrtcProvider(roomName, ydoc, config);
+      
+      provider.on('status', event => {
+        console.log('📡 WebRTC status:', event.status);
+      });
 
-      console.log('🔍 PROVIDER DEBUG:', {
-    roomName: roomName,
-    cacheKey: cacheKey,
-    hasToken: !!options.token,
-    config: config,
-    timestamp: new Date().toISOString(),
-    platform: typeof window.electronAPI !== 'undefined' ? 'Electron' : 'Browser'
-});
-
-    provider = new WebrtcProvider(roomName, ydoc, config);
-    
-// Replace the existing provider.on('status') and provider.on('peers') with:
-provider.on('status', event => {
-  console.log(`🔍 WebRTC Provider status (${options.token ? 'authenticated' : 'anonymous'}):`, {
-    status: event.status,
-    roomName: roomName,
-    timestamp: new Date().toISOString(),
-    platform: typeof window.electronAPI !== 'undefined' ? 'Electron' : 'Browser'
-  });
-});
-
-provider.on('peers', event => {
-  console.log('🔍 WebRTC peers changed:', {
-    roomName: roomName,
-    added: event.added,
-    removed: event.removed,
-    webrtcPeersCount: event.webrtcPeers?.length || 0,
-    bcPeersCount: event.bcPeers?.length || 0,
-    totalPeers: (event.webrtcPeers?.length || 0) + (event.bcPeers?.length || 0),
-    timestamp: new Date().toISOString(),
-    platform: typeof window.electronAPI !== 'undefined' ? 'Electron' : 'Browser'
-  });
-});
-  } catch (err) {
-    console.error('Failed to create WebRTC provider:', err);
-    
-    // Fallback to cached version if exists
-    if (cache.docs.has(cacheKey) && cache.providers.has(cacheKey)) {
-      ydoc.destroy();
-      cache.refs.set(cacheKey, (cache.refs.get(cacheKey) || 0) + 1);
-      return { 
-        ydoc: cache.docs.get(cacheKey), 
-        provider: cache.providers.get(cacheKey), 
-        created: false 
-      };
+      provider.on('peers', event => {
+        console.log('👥 WebRTC peers:', {
+          webrtcPeers: event.webrtcPeers?.length || 0,
+          bcPeers: event.bcPeers?.length || 0
+        });
+      });
+      
+      console.log('🌐 WebRTC provider created');
+    } else {
+      provider = createLocalProvider(ydoc);
+      console.log('📝 Local provider created');
     }
-    throw err;
+  } catch (err) {
+    console.error('❌ Provider creation failed:', err);
+    provider = createLocalProvider(ydoc);
   }
 
+  // ✅ CACHE
   cache.docs.set(cacheKey, ydoc);
   cache.providers.set(cacheKey, provider);
   cache.refs.set(cacheKey, 1);
-  return { ydoc, provider, created: true };
+  
+  console.log('✅ Document cached');
+  
+  return { 
+    ydoc, 
+    provider, 
+    created: true,
+    standardFieldName: `editor-${documentId}`
+  };
 }
 
-export function releaseRoom(roomName, options = {}) {
-  if (typeof window === "undefined") {
-    return { ydoc: null, provider: null, created: false };
-  }
+// ✅ GENTLE CLEANUP: Only cleanup after multiple decreases
+export function releaseRoom(documentId, options = {}) {
+  if (typeof window === "undefined") return;
   
   const cache = getGlobalCache();
   if (!cache) return;
 
-  // Use same cache key logic as ensureRoom
-  const cacheKey = options.token ? `${roomName}_authenticated` : roomName;
+  const cacheKey = options.enableWebRTC ? 
+    `${documentId}_webrtc_${options.token || 'none'}` : 
+    `${documentId}_local`;
   
   const refs = cache.refs.get(cacheKey) || 0;
-  if (refs <= 1) {
+  const newRefs = refs - 1;
+  
+  console.log(`📉 Release: ${cacheKey.slice(0, 20)}... refs: ${refs} -> ${newRefs}`);
+  
+  // ✅ GENTLE: Only cleanup when refs go negative (extra protection)
+  if (newRefs <= -1) {
     const provider = cache.providers.get(cacheKey);
     const ydoc = cache.docs.get(cacheKey);
     
-    console.log(`🧹 Cleaning up Y.js room: ${cacheKey}`);
+    console.log(`🧹 Cleaning up: ${cacheKey.slice(0, 20)}...`);
     
     try { 
-      provider?.off('status');
-      provider?.off('peers');
-      provider?.destroy(); 
+      if (provider?.destroy) provider.destroy();
+      if (ydoc?.destroy) ydoc.destroy();
     } catch (error) {
-      console.warn('Error destroying provider:', error);
-    }
-    
-    try { 
-      ydoc?.destroy(); 
-    } catch (error) {
-      console.warn('Error destroying ydoc:', error);
+      console.warn('Cleanup error:', error);
     }
     
     cache.providers.delete(cacheKey);
     cache.docs.delete(cacheKey);
     cache.refs.delete(cacheKey);
   } else {
-    cache.refs.set(cacheKey, refs - 1);
-    console.log(`📉 Decreased ref count for ${cacheKey}: ${refs - 1}`);
+    cache.refs.set(cacheKey, newRefs);
   }
 }
 
-// Helper function to get current room info (for debugging)
-export function getRoomInfo(roomName, options = {}) {
+export function getRoomInfo(documentId, options = {}) {
   const cache = getGlobalCache();
   if (!cache) return null;
   
-  const cacheKey = options.token ? `${roomName}_authenticated` : roomName;
+  const cacheKey = options.enableWebRTC ? 
+    `${documentId}_webrtc_${options.token || 'none'}` : 
+    `${documentId}_local`;
   
   return {
+    documentId,
     cacheKey,
     hasDoc: cache.docs.has(cacheKey),
     hasProvider: cache.providers.has(cacheKey),
-    refCount: cache.refs.get(cacheKey) || 0,
-    totalRooms: cache.docs.size
+    refCount: cache.refs.get(cacheKey) || 0
   };
 }
