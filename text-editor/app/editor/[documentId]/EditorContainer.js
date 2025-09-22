@@ -11,7 +11,18 @@ import SaveIndicator from "./components/SaveIndicator"
 import ClientOnly from "./components/ClientOnly"
 
 function EditorContainerContent({ documentId, title = "Untitled Document" }) {
-  const { ydoc, provider, isCollaborationMode, collaborationToken, standardFieldName } = useYjsRoom(documentId, { documentId, documentTitle: title })
+  // ✅ SEAMLESS SWITCHING: Get all switching functions
+  const { 
+    ydoc, 
+    provider, 
+    isCollaborationMode, 
+    collaborationToken, 
+    standardFieldName,
+    isSwitching,
+    enableCollaboration,
+    disableCollaboration 
+  } = useYjsRoom(documentId, { documentId, documentTitle: title });
+
   const { editor, saveStatus, saveDocument, editorError, fieldName } = useCollaboration(ydoc, provider, documentId, title, standardFieldName)
   const { peerCount, connectionStatus, activePeers } = useAwareness(provider, documentId)
 
@@ -29,10 +40,11 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
         hasToken: !!new URLSearchParams(window.location.search).get('token'),
         expectedRoom: `collab-${documentId}`,
         peerCount,
-        connectionStatus
+        connectionStatus,
+        isSwitching
       });
     }
-  }, [documentId, isCollaborationMode, peerCount, connectionStatus]);
+  }, [documentId, isCollaborationMode, peerCount, connectionStatus, isSwitching]);
 
   // ✅ LONG-TERM ERROR HANDLING: Classify errors properly
   useEffect(() => {
@@ -167,23 +179,58 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
     }
   }, [editorError, editor]);
 
-  // ✅ SHARE FUNCTION
+  // ✅ SEAMLESS SHARE FUNCTION: Enable collaboration mode
   const handleShareDocument = useCallback(async () => {
+    if (isSwitching) {
+      alert('Please wait, switching to collaboration mode...');
+      return;
+    }
+
     try {
+      // ✅ SHOW: User that we're enabling collaboration
+      console.log('🔄 Starting seamless collaboration switch for sharing');
+      
       const { collaborationService } = await import('../../services/collabService')
       const linkData = await collaborationService.generateCollaborationLink(documentId)
       
-      if (linkData?.url) {
+      if (linkData?.url && linkData?.token) {
+        // ✅ SEAMLESS: Enable collaboration mode with the generated token
+        console.log('🔄 Enabling collaboration mode for sharing');
+        await enableCollaboration(linkData.token);
+        
+        // ✅ WAIT: Brief moment for mode switch to complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // ✅ COPY: Link to clipboard
         await navigator.clipboard.writeText(linkData.url)
-        alert(`Collaboration link copied!\n\n${linkData.url}`)
+        
+        alert(`✅ Collaboration enabled!\n\nLink copied to clipboard:\n${linkData.url}\n\n🔄 Your document is now in collaboration mode - others can join immediately!\n\n👥 You'll see collaborators appear above when they join.`)
       } else {
         alert('Failed to generate collaboration link.')
       }
     } catch (error) {
       console.error('Share error:', error)
-      alert(`Error: ${error.message}`)
+      alert(`Error enabling collaboration: ${error.message}`)
     }
-  }, [documentId]);
+  }, [documentId, enableCollaboration, isSwitching]);
+
+  // ✅ NEW: Disable collaboration function
+  const handleDisableCollaboration = useCallback(async () => {
+    if (isSwitching) {
+      alert('Please wait, mode switching in progress...');
+      return;
+    }
+
+    try {
+      console.log('🔄 Disabling collaboration mode');
+      await disableCollaboration();
+      
+      alert('📝 Switched to solo mode.\n\nYour document is now private and no longer shareable.')
+    } catch (error) {
+      console.error('Disable collaboration error:', error)
+      alert(`Error switching to solo mode: ${error.message}`)
+    }
+  }, [disableCollaboration, isSwitching]);
 
   // ✅ KEYBOARD SHORTCUTS
   useEffect(() => {
@@ -208,14 +255,21 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
       <div className="h-full flex flex-col bg-gray-50">
         <div className="flex-1 mx-4 my-2 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden">
           
-          {/* ✅ ENHANCED MODE INDICATOR */}
+          {/* ✅ ENHANCED MODE INDICATOR WITH SWITCHING STATE */}
           <div className="border-b bg-gray-50 px-4 py-2 text-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="font-medium">
-                  {isCollaborationMode ? '🤝 Collaboration Mode' : '📝 Solo Mode'}
-                </span>
-                {isCollaborationMode && (
+                {isSwitching ? (
+                  <span className="font-medium text-blue-600">
+                    🔄 Switching modes...
+                  </span>
+                ) : (
+                  <span className="font-medium">
+                    {isCollaborationMode ? '🤝 Collaboration Mode' : '📝 Solo Mode'}
+                  </span>
+                )}
+                
+                {isCollaborationMode && !isSwitching && (
                   <span className="text-green-600 font-medium">
                     {peerCount} {peerCount === 1 ? 'collaborator' : 'collaborators'} connected
                   </span>
@@ -244,27 +298,66 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
             </div>
           </div>
 
-          <CollaborationStatus
-            peerCount={peerCount}
-            activePeers={activePeers}
-            connectionStatus={connectionStatus}
-            ydoc={ydoc}
-            provider={provider}
-            roomName={documentId}
-          />
+          {/* ✅ SHOW COLLABORATION STATUS: Only when in collaboration mode */}
+          {isCollaborationMode && !isSwitching && (
+            <CollaborationStatus
+              peerCount={peerCount}
+              activePeers={activePeers}
+              connectionStatus={connectionStatus}
+              ydoc={ydoc}
+              provider={provider}
+              roomName={documentId}
+            />
+          )}
 
-          {/* ✅ TOOLBAR */}
+          {/* ✅ ENHANCED TOOLBAR WITH MODE SWITCHING */}
           <div className="flex items-center justify-between border-b bg-muted/20">
             <div className="flex items-center gap-2">
               <EditorToolbar editor={editor} />
               
-              <div className="ml-4 border-l pl-4">
-                <button
-                  onClick={handleShareDocument}
-                  className="px-3 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 transition-colors"
-                >
-                  🔗 Share
-                </button>
+              {/* ✅ COLLABORATION CONTROLS */}
+              <div className="ml-4 border-l pl-4 flex gap-2">
+                {!isCollaborationMode ? (
+                  <button
+                    onClick={handleShareDocument}
+                    disabled={isSwitching}
+                    className={`px-3 py-2 text-white text-sm rounded transition-colors ${
+                      isSwitching 
+                        ? 'bg-gray-400 cursor-not-allowed' 
+                        : 'bg-blue-500 hover:bg-blue-600'
+                    }`}
+                  >
+                    {isSwitching ? '🔄 Enabling...' : '🔗 Enable Collaboration'}
+                  </button>
+                ) : (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        try {
+                          const url = window.location.href;
+                          await navigator.clipboard.writeText(url);
+                          alert(`Collaboration link copied!\n\n${url}`);
+                        } catch (error) {
+                          alert('Failed to copy link');
+                        }
+                      }}
+                      className="px-3 py-2 bg-green-500 text-white text-sm rounded hover:bg-green-600 transition-colors"
+                    >
+                      📋 Copy Link
+                    </button>
+                    <button
+                      onClick={handleDisableCollaboration}
+                      disabled={isSwitching}
+                      className={`px-3 py-2 text-white text-sm rounded transition-colors ${
+                        isSwitching 
+                          ? 'bg-gray-400 cursor-not-allowed' 
+                          : 'bg-orange-500 hover:bg-orange-600'
+                      }`}
+                    >
+                      {isSwitching ? '🔄 Disabling...' : '📝 Switch to Solo'}
+                    </button>
+                  </div>
+                )}
               </div>
               
               {/* ✅ DEVELOPMENT TOOLS */}
@@ -286,9 +379,27 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
             </div>
           </div>
 
-          {/* ✅ SMART EDITOR CONTENT: Only break for real issues */}
+          {/* ✅ SMART EDITOR CONTENT: Handle switching state */}
           <div className="flex-1 overflow-auto">
-            {shouldShowErrorUI ? (
+            {isSwitching ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center space-y-4">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+                  <div className="text-blue-600 text-lg font-medium">🔄 Switching Modes</div>
+                  <p className="text-gray-600 max-w-md">
+                    {isCollaborationMode 
+                      ? "Enabling collaboration features... Your content is being preserved." 
+                      : "Switching to solo mode... Your content is being preserved."
+                    }
+                  </p>
+                  <div className="text-sm text-gray-500">
+                    <p>✅ Document content: Preserved</p>
+                    <p>✅ Edit history: Maintained</p>
+                    <p>🔄 Mode: Switching...</p>
+                  </div>
+                </div>
+              </div>
+            ) : shouldShowErrorUI ? (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center space-y-4">
                   <div className="text-red-500 text-lg">🔌 Connection Issue</div>
@@ -339,17 +450,18 @@ function EditorContainerContent({ documentId, title = "Untitled Document" }) {
             )}
           </div>
 
-          {/* ✅ DEVELOPMENT INFO */}
+          {/* ✅ ENHANCED DEVELOPMENT INFO */}
           {process.env.NODE_ENV === 'development' && (
             <div className="border-t bg-gray-50 p-2 text-xs text-gray-600">
               <div className="flex items-center justify-between">
                 <span>Document: <code>{documentId.slice(0, 8)}...</code></span>
                 <span>Y.js: <code>{!!ydoc ? 'Ready' : 'Loading'}</code></span>
                 <span>Editor: <code>{!!editor ? 'Ready' : 'Loading'}</code></span>
-                <span>Mode: <code>{isCollaborationMode ? 'Collab' : 'Solo'}</code></span>
+                <span>Mode: <code>{isSwitching ? 'Switching' : (isCollaborationMode ? 'Collab' : 'Solo')}</code></span>
                 <span>Peers: <code>{peerCount}</code></span>
                 <span>Warnings: <code>{warningCount}</code></span>
                 <span>Status: <code>{criticalError ? 'Error' : shouldShowWarning ? 'Warning' : 'OK'}</code></span>
+                <span>Token: <code>{collaborationToken ? 'Yes' : 'No'}</code></span>
               </div>
             </div>
           )}

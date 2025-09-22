@@ -1,18 +1,17 @@
-import { useMemo, useEffect, useState, useRef } from "react";
-import { ensureRoom, releaseRoom } from "../utils/yjsCache";
+import { useMemo, useEffect, useState, useRef, useCallback } from "react";
+import { ensureRoom, releaseRoom, switchDocumentMode } from "../utils/yjsCache";
 
 export function useYjsRoom(documentId, options = {}) {
   const [collaborationToken, setCollaborationToken] = useState(null);
   const [isCollaborationMode, setIsCollaborationMode] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
   
-  // ✅ CRITICAL: Stable room data with ref
   const roomDataRef = useRef(null);
   const stableDocumentId = useRef(documentId);
 
-  // Update stable document ID only when it actually changes
   if (stableDocumentId.current !== documentId) {
     stableDocumentId.current = documentId;
-    roomDataRef.current = null; // Force recreation
+    roomDataRef.current = null;
   }
 
   // Detect collaboration mode from URL
@@ -21,34 +20,107 @@ export function useYjsRoom(documentId, options = {}) {
       const urlParams = new URLSearchParams(window.location.search);
       const token = urlParams.get('token');
       
-      if (token) {
-        console.log('🤝 Collaboration mode detected');
+      if (token && token !== collaborationToken) {
+        console.log('🤝 Collaboration mode detected with new token');
         setCollaborationToken(token);
         setIsCollaborationMode(true);
-      } else {
+      } else if (!token && isCollaborationMode) {
         console.log('📝 Solo mode detected');
         setIsCollaborationMode(false);
         setCollaborationToken(null);
       }
     }
-  }, []);
+  }, [collaborationToken, isCollaborationMode]);
 
-  // ✅ STABLE: Only create room when key parameters change
-  const roomKey = `${documentId}_${isCollaborationMode ? 'collab' : 'solo'}_${collaborationToken || 'none'}`;
-  
+  // Protocol handler for Electron
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.electronAPI?.onJoinCollaboration) {
+      const handleJoinCollaboration = (collaborationData) => {
+        console.log('🤝 Protocol handler join collaboration:', collaborationData);
+        
+        const { token, documentId: collabDocId } = collaborationData;
+        
+        if (collabDocId && token) {
+          if (documentId === collabDocId) {
+            // ✅ SAME DOCUMENT: Switch to collaboration mode
+            console.log('🔄 Switching current document to collaboration mode');
+            setCollaborationToken(token);
+            setIsCollaborationMode(true);
+          } else {
+            // ✅ DIFFERENT DOCUMENT: Navigate
+            window.location.href = `/editor/${collabDocId}?token=${token}`;
+          }
+        }
+      };
+      
+      window.electronAPI.onJoinCollaboration(handleJoinCollaboration);
+      
+      return () => {
+        if (window.electronAPI?.removeJoinCollaborationListener) {
+          window.electronAPI.removeJoinCollaborationListener();
+        }
+      };
+    }
+  }, [documentId]);
+
+  // ✅ SEAMLESS SWITCHING: Enable collaboration for current document
+  const enableCollaboration = useCallback(async (token) => {
+    if (isSwitching) return;
+    
+    console.log('🔄 Enabling collaboration mode for current document');
+    setIsSwitching(true);
+    
+    try {
+      setCollaborationToken(token);
+      setIsCollaborationMode(true);
+      
+      // ✅ NAVIGATE: Update URL to include token
+      const newUrl = `/editor/${documentId}?token=${token}`;
+      window.history.pushState({}, '', newUrl);
+      
+      console.log('✅ Collaboration mode enabled successfully');
+    } catch (error) {
+      console.error('❌ Failed to enable collaboration:', error);
+    } finally {
+      setIsSwitching(false);
+    }
+  }, [documentId, isSwitching]);
+
+  // ✅ DISABLE COLLABORATION: Switch back to solo mode
+  const disableCollaboration = useCallback(async () => {
+    if (isSwitching) return;
+    
+    console.log('🔄 Disabling collaboration mode');
+    setIsSwitching(true);
+    
+    try {
+      setIsCollaborationMode(false);
+      setCollaborationToken(null);
+      
+      // ✅ NAVIGATE: Remove token from URL
+      const newUrl = `/editor/${documentId}`;
+      window.history.pushState({}, '', newUrl);
+      
+      console.log('✅ Solo mode enabled successfully');
+    } catch (error) {
+      console.error('❌ Failed to disable collaboration:', error);
+    } finally {
+      setIsSwitching(false);
+    }
+  }, [documentId, isSwitching]);
+
+  // ✅ STABLE ROOM DATA: Seamless switching
   const roomData = useMemo(() => {
     if (!documentId) {
-      console.log('⏳ No document ID');
-      return { ydoc: null, provider: null, fieldSuffix: '0' };
+      return { ydoc: null, provider: null, standardFieldName: null };
     }
 
-    // ✅ REUSE: Return existing room data if key hasn't changed
-    if (roomDataRef.current && roomDataRef.current.roomKey === roomKey) {
-      console.log('♻️ Reusing existing room data:', roomKey);
-      return roomDataRef.current;
-    }
-
-    console.log('🆕 Creating new room data:', roomKey);
+    console.log('🏗️ Room data (seamless switching):', {
+      documentId: documentId.slice(0, 8) + '...',
+      isCollaborationMode,
+      hasToken: !!collaborationToken,
+      isSwitching
+    });
 
     const roomOptions = {
       ...options,
@@ -59,42 +131,53 @@ export function useYjsRoom(documentId, options = {}) {
     
     const roomResult = ensureRoom(documentId, roomOptions);
     
-    // ✅ STABLE: Store with room key for reuse detection
-    const stableRoomData = {
-      ...roomResult,
-      roomKey,
-      createdAt: Date.now()
-    };
-
-    roomDataRef.current = stableRoomData;
+    if (roomResult.modeSwitch) {
+      console.log('🔄 Seamless mode switch completed:', {
+        documentId: documentId.slice(0, 8) + '...',
+        newMode: isCollaborationMode ? 'collaboration' : 'solo'
+      });
+    }
     
-    console.log('✅ Room data created and cached');
-    return stableRoomData;
+    return roomResult;
 
-  }, [roomKey]); // ✅ ONLY roomKey dependency
+  }, [documentId, isCollaborationMode, collaborationToken, options]);
 
-  // ✅ CLEANUP: Only when document ID actually changes
+  // ✅ CLEANUP: Standard cleanup
   useEffect(() => {
     return () => {
-      if (stableDocumentId.current) {
-        console.log('🧹 Cleaning up room for:', stableDocumentId.current);
-        try {
-          releaseRoom(stableDocumentId.current, { token: collaborationToken });
-        } catch (error) {
-          console.warn('❌ Cleanup error:', error);
-        }
-      }
+      console.log('🧹 Room cleanup');
+      releaseRoom(documentId, { 
+        enableWebRTC: isCollaborationMode, 
+        token: collaborationToken 
+      });
     };
-  }, [documentId]); // ✅ Only cleanup when documentId changes
+  }, [documentId]);
 
   return { 
     ydoc: roomData?.ydoc || null, 
     provider: roomData?.provider || null,
-    fieldSuffix: roomData?.fieldSuffix || '0',
+    standardFieldName: roomData?.standardFieldName || `editor-${documentId}`,
+    
     isCollaborationMode,
     collaborationToken,
-    setCollaborationToken,
+    isSwitching,
+    
+    // ✅ NEW: Seamless switching functions
+    enableCollaboration,
+    disableCollaboration,
+    setCollaborationToken, // Keep for backward compatibility
+    
     documentId,
-    hasRealTimeSync: !!(isCollaborationMode && roomData?.provider && collaborationToken)
+    hasRealTimeSync: !!(isCollaborationMode && roomData?.provider && collaborationToken),
+    
+    debugInfo: {
+      documentId: documentId.slice(0, 8) + '...',
+      mode: isCollaborationMode ? 'collaboration' : 'solo',
+      hasToken: !!collaborationToken,
+      hasProvider: !!roomData?.provider,
+      hasYdoc: !!roomData?.ydoc,
+      providerType: roomData?.provider?.constructor.name || 'none',
+      isSwitching
+    }
   };
 }
