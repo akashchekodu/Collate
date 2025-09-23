@@ -244,10 +244,26 @@ app.whenReady().then(async () => {
       throw error;
     }
   });
-
   ipcMain.handle('documents:load', async (event, documentId) => {
     try {
+      // ✅ CRITICAL DEBUG: Show exactly what's calling this
+      console.log('🔍 DOCUMENT LOAD CALL #' + Date.now() % 10000, {
+        documentId: documentId.slice(0, 8) + '...',
+        timestamp: new Date().toISOString()
+      });
+
+      // ✅ STACK TRACE: Show the call stack
+      const stack = new Error().stack;
+      const callerLines = stack.split('\n').slice(1, 6); // Get first 5 lines
+      console.log('📞 LOAD CALLED FROM:');
+      callerLines.forEach((line, index) => {
+        console.log(`   ${index + 1}. ${line.trim()}`);
+      });
+
       const result = await documentStorage.loadDocument(documentId);
+
+      console.log('✅ LOAD COMPLETED:', documentId.slice(0, 8) + '...');
+
       if (result) {
         return {
           state: result.state,

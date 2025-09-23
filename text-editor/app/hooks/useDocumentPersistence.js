@@ -13,6 +13,14 @@ export function useDocumentPersistence(ydoc, documentId, title = "Untitled Docum
   const [isElectron, setIsElectron] = useState(false);
   const ytextRef = useRef(null);
 
+  console.log('🔄 useDocumentPersistence called:', {
+    documentId: documentId?.slice(0, 8) + '...' || 'undefined',
+    hasYdoc: !!ydoc,
+    timestamp: Date.now(),
+    persistenceCallCount: ++window.persistenceCallCount || (window.persistenceCallCount = 1)
+  });
+
+
   useEffect(() => {
     setIsElectron(typeof window !== 'undefined' && window.electronAPI?.isElectron);
   }, []);
@@ -138,7 +146,13 @@ export function useDocumentPersistence(ydoc, documentId, title = "Untitled Docum
   const loadDocument = useCallback(async () => {
     if (!documentId || !isElectron) return null;
 
+    console.log('🔄 useDocumentPersistence.loadDocument called:', {
+      documentId: documentId.slice(0, 8) + '...',
+      isElectron
+    });
+
     try {
+      console.log('📖 PERSISTENCE LOAD: Calling electronAPI.documents.load');
       const result = await window.electronAPI.documents.load(documentId);
       if (result && result.state) {
         console.log('📖 Document loaded from storage:', documentId);

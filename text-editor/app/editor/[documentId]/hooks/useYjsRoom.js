@@ -2,6 +2,17 @@ import { useMemo, useEffect, useState, useRef, useCallback } from "react";
 import { ensureRoom, releaseRoom, switchDocumentMode } from "../utils/yjsCache";
 
 export function useYjsRoom(documentId, options = {}) {
+  // ✅ SSR SAFETY: Only log on client side
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      console.log('🔄 useYjsRoom called:', {
+        documentId: documentId?.slice(0, 8) + '...' || 'undefined',
+        timestamp: Date.now(),
+        hookCallCount: ++window.yjsRoomCallCount || (window.yjsRoomCallCount = 1)
+      });
+    }
+  });
+
   const [collaborationToken, setCollaborationToken] = useState(null);
   const [isCollaborationMode, setIsCollaborationMode] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
@@ -16,71 +27,49 @@ export function useYjsRoom(documentId, options = {}) {
     setIsInitialized(false);
   }
 
-  // ✅ FIXED: Check session-persistent collaboration mode
+  // ✅ SIMPLIFIED: Use passed collaboration data instead of loading
   useEffect(() => {
-    async function initializeCollaborationMode() {
-      if (!documentId) return;
+    if (!documentId) return;
 
-      console.log('🔄 Initializing collaboration mode for:', documentId.slice(0, 8));
+    console.log('🔄 Initializing collaboration mode (SIMPLIFIED):', documentId.slice(0, 8));
 
-      let existingToken = null;
-      let shouldCollaborate = false;
-      let collaborationMetadata = null;
+    // ✅ USE PASSED DATA: No additional loading needed
+    const collaborationMetadata = options.collaborationData;
 
-      // ✅ STEP 1: Check if document has session-persistent collaboration
-      if (typeof window !== 'undefined' && window.electronAPI?.documents) {
-        try {
-          console.log('📋 Loading document from storage...');
-          const doc = await window.electronAPI.documents.load(documentId);
-          collaborationMetadata = doc?.metadata?.collaboration;
+    let shouldCollaborate = false;
+    let existingToken = null;
 
-          console.log('📋 Raw collaboration metadata:', collaborationMetadata);
+    if (collaborationMetadata?.enabled && collaborationMetadata?.sessionPersistent) {
+      console.log('✅ Document has session-persistent collaboration');
+      shouldCollaborate = true;
+      existingToken = collaborationMetadata.link?.token || null;
+    } else {
+      console.log('📋 No session-persistent collaboration found');
+    }
 
-          // ✅ CHECK: Session-persistent collaboration
-          if (collaborationMetadata?.enabled && collaborationMetadata?.sessionPersistent) {
-            console.log('✅ Document has session-persistent collaboration');
-            shouldCollaborate = true;
-            existingToken = collaborationMetadata.link?.token || null;
-          } else {
-            console.log('📋 Document has no active collaboration session');
-          }
-        } catch (error) {
-          console.error('❌ Failed to check collaboration mode:', error);
-        }
-      }
-
-      // ✅ STEP 2: Check URL for token (higher priority)
+    // ✅ SSR SAFETY: Check URL for token only on client side
+    if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
       const urlToken = urlParams.get('token');
 
-      // ✅ STEP 3: Determine final state (URL token overrides stored state)
       const finalToken = urlToken || existingToken;
       const finalCollabMode = !!finalToken || shouldCollaborate;
 
-      console.log('🎯 Final collaboration state determination:', {
-        documentId: documentId.slice(0, 8) + '...',
-        hasUrlToken: !!urlToken,
-        hasStoredToken: !!existingToken,
-        shouldCollaborate,
-        finalToken: !!finalToken,
+      console.log('🎯 Final collaboration state (SIMPLIFIED):', {
         finalCollabMode,
-        metadataEnabled: collaborationMetadata?.enabled,
-        metadataSessionPersistent: collaborationMetadata?.sessionPersistent
+        hasToken: !!finalToken,
+        urlToken: !!urlToken,
+        existingToken: !!existingToken
       });
 
-      // ✅ STEP 4: Set state atomically
+      // Set state atomically
       setCollaborationToken(finalToken);
       setIsCollaborationMode(finalCollabMode);
-      setIsInitialized(true);
-
-      console.log('✅ Collaboration mode initialized with state:', {
-        isCollaborationMode: finalCollabMode,
-        hasToken: !!finalToken
-      });
     }
 
-    initializeCollaborationMode();
-  }, [documentId]);
+    setIsInitialized(true);
+
+  }, [documentId, options.collaborationData]); // ✅ Only depend on documentId and passed data
 
   // ✅ FIXED: Only handle URL changes AFTER initialization
   useEffect(() => {
@@ -95,7 +84,7 @@ export function useYjsRoom(documentId, options = {}) {
         setCollaborationToken(token);
         setIsCollaborationMode(true);
       } else if (!token && isCollaborationMode) {
-        // ✅ CHANGED: Check if collaboration should persist
+        // Check if collaboration should persist
         checkCollaborationPersistence();
       }
     }
@@ -183,17 +172,6 @@ export function useYjsRoom(documentId, options = {}) {
       window.history.pushState({}, '', newUrl);
 
       console.log('✅ useYjsRoom: URL updated to', newUrl);
-
-      // ✅ STEP 4: Verify session persistence (debugging)
-      setTimeout(async () => {
-        try {
-          const { collaborationService } = await import('../../../services/collabService');
-          const shouldPersist = await collaborationService.shouldCollaborationPersist(documentId);
-          console.log('🔍 Session persistence verification:', shouldPersist);
-        } catch (error) {
-          console.error('❌ Session persistence verification failed:', error);
-        }
-      }, 500);
 
       console.log('✅ useYjsRoom: Collaboration mode enabled successfully');
     } catch (error) {
