@@ -10,10 +10,9 @@ export default function ShareControls({
   isElectron,
   isCollaborationMode,
   isSwitching,
-  // ✅ MISSING: Add the callback functions as props
   enableCollaboration,
   disableCollaboration,
-  title = "Untitled Document" // ✅ Add title prop for better alerts
+  title = "Untitled Document"
 }) {
   // ✅ Clipboard helper
   const copyToClipboardSafely = useCallback(async (text, description = "Link") => {
@@ -41,6 +40,45 @@ export default function ShareControls({
       return false
     }
   }, [])
+
+  // ✅ HELPER: Save collaboration metadata immediately
+  // ✅ FIXED: Ensure sessionPersistent is always included
+  const saveCollaborationMetadataImmediately = useCallback(async (collaborationData) => {
+    try {
+      console.log('💾 Saving collaboration metadata immediately:', collaborationData);
+
+      const currentDoc = await window.electronAPI.documents.load(documentId);
+      if (!currentDoc) {
+        throw new Error('Failed to load current document');
+      }
+
+      const updatedMetadata = {
+        ...currentDoc.metadata,
+        collaboration: {
+          ...currentDoc.metadata?.collaboration,
+          ...collaborationData,
+          // ✅ CRITICAL: Always ensure these core fields
+          enabled: collaborationData.enabled ?? true,
+          mode: collaborationData.mode ?? 'collaborative',
+          sessionPersistent: collaborationData.sessionPersistent ?? true, // ✅ FIX: Default to true
+          lastActivity: new Date().toISOString(),
+          schemaVersion: 2
+        }
+      };
+
+      await window.electronAPI.documents.save(
+        documentId,
+        currentDoc.state,
+        updatedMetadata
+      );
+
+      console.log('✅ Collaboration metadata saved successfully');
+      return true;
+    } catch (error) {
+      console.error('❌ Failed to save collaboration metadata:', error);
+      return false;
+    }
+  }, [documentId]);
 
   // ✅ Export
   const handleExport = async () => {
@@ -73,6 +111,14 @@ export default function ShareControls({
       const link = await collaborationService.generateLongExpiryLink(documentId, ["read", "write"])
 
       if (link?.url) {
+        // ✅ SAVE METADATA: Update permanent links immediately
+        await saveCollaborationMetadataImmediately({
+          links: {
+            permanent: [link],
+            oneTime: []
+          }
+        });
+
         const copySuccess = await copyToClipboardSafely(link.url, "Permanent link")
         const message = copySuccess
           ? `🔗 Permanent Link Created!\n\nLink copied to clipboard!\n\nURL: ${link.url}\n\nExpires: ${new Date(link.expiresAt).toLocaleDateString()}`
@@ -85,7 +131,7 @@ export default function ShareControls({
       console.error('❌ Failed to generate permanent link:', error)
       alert(`❌ Error generating permanent link: ${error.message}`)
     }
-  }, [documentId, isElectron, copyToClipboardSafely])
+  }, [documentId, isElectron, copyToClipboardSafely, saveCollaborationMetadataImmediately])
 
   const handleGenerateOneTimeInvitation = useCallback(async () => {
     if (!documentId || !isElectron) return
@@ -95,6 +141,17 @@ export default function ShareControls({
       const invitation = await collaborationService.generateOneTimeInvitation(documentId, "ShareControls User")
 
       if (invitation?.url) {
+        // ✅ SAVE METADATA: Update one-time invitations immediately
+        const currentDoc = await window.electronAPI.documents.load(documentId);
+        const existingOneTime = currentDoc?.metadata?.collaboration?.links?.oneTime || [];
+
+        await saveCollaborationMetadataImmediately({
+          links: {
+            permanent: currentDoc?.metadata?.collaboration?.links?.permanent || [],
+            oneTime: [...existingOneTime, invitation]
+          }
+        });
+
         const copySuccess = await copyToClipboardSafely(invitation.url, "One-time invitation")
         const message = copySuccess
           ? `🎫 One-Time Invitation Created!\n\nLink copied to clipboard!\n\nURL: ${invitation.url}\n\n⚠️ This link can only be used ONCE.`
@@ -107,7 +164,7 @@ export default function ShareControls({
       console.error('❌ Failed to generate one-time invitation:', error)
       alert(`❌ Error generating one-time invitation: ${error.message}`)
     }
-  }, [documentId, isElectron, copyToClipboardSafely])
+  }, [documentId, isElectron, copyToClipboardSafely, saveCollaborationMetadataImmediately])
 
   const handleShowCollaborationInfo = useCallback(async () => {
     if (!documentId || !isElectron) return
@@ -158,7 +215,6 @@ export default function ShareControls({
         `Mode: ${doc?.metadata?.collaboration?.mode || 'none'}\n` +
         `Enabled: ${doc?.metadata?.collaboration?.enabled || false}\n` +
         `Session Persistent: ${doc?.metadata?.collaboration?.sessionPersistent || false}\n` +
-        `User Choice: ${doc?.metadata?.collaboration?.userChoice || 'none'}\n` +
         `Link exists: ${!!doc?.metadata?.collaboration?.link}\n` +
         `Token exists: ${!!doc?.metadata?.collaboration?.link?.token}`
       )
@@ -168,50 +224,59 @@ export default function ShareControls({
     }
   }, [documentId, isElectron])
 
-  // ✅ FIXED: Use the passed callback functions
+  // ✅ FIXED: Enable collaboration with immediate metadata saving
+  // ✅ FIXED: Single coordinated save
   const handleEnableCollaboration = useCallback(async () => {
-    if (isSwitching || !enableCollaboration) return
+    if (isSwitching || !enableCollaboration) return;
 
     try {
-      console.log('🔄 Starting collaboration from ShareControls')
+      console.log('🔄 Starting collaboration from ShareControls');
 
-      // ✅ Generate collaboration link
-      const { collaborationService } = await import("../../services/collabService")
-      const linkData = await collaborationService.generateCollaborationLink(documentId)
+      // ✅ STEP 1: Generate collaboration link (don't save yet)
+      const { collaborationService } = await import("../../services/collabService");
+      const linkData = await collaborationService.generateCollaborationLink(documentId);
 
       if (!linkData?.url || !linkData?.token) {
-        throw new Error('Failed to generate collaboration link')
+        throw new Error('Failed to generate collaboration link');
       }
 
-      // ✅ Enable in UI state using the passed callback
-      await enableCollaboration(linkData.token)
+      // ✅ STEP 2: Enable in UI state (this will trigger the coordinated save)
+      await enableCollaboration(linkData.token);
 
-      // ✅ Copy link and show success
-      const copySuccess = await copyToClipboardSafely(linkData.url, "Collaboration link")
+      // ✅ STEP 3: Show success (no duplicate save needed)
+      const copySuccess = await copyToClipboardSafely(linkData.url, "Collaboration link");
       const message = copySuccess
-        ? `✅ Collaboration enabled!\n\nLink copied to clipboard:\n${linkData.url}\n\nShare this link with others to collaborate.`
-        : `✅ Collaboration enabled!\n\nShare this link:\n${linkData.url}`
+        ? `✅ Collaboration enabled!\n\nLink copied to clipboard:\n${linkData.url}`
+        : `✅ Collaboration enabled!\n\nShare this link:\n${linkData.url}`;
 
-      alert(message)
-      console.log('✅ Collaboration enabling completed from ShareControls')
+      alert(message);
+      console.log('✅ Collaboration enabling completed');
 
     } catch (error) {
-      console.error('❌ Collaboration enabling failed:', error)
-      alert(`❌ Error enabling collaboration: ${error.message}\n\nPlease try again.`)
+      console.error('❌ Collaboration enabling failed:', error);
+      alert(`❌ Error enabling collaboration: ${error.message}`);
     }
-  }, [documentId, enableCollaboration, isSwitching, copyToClipboardSafely])
+  }, [documentId, enableCollaboration, isSwitching, copyToClipboardSafely]);
 
   const handleDisableCollaboration = useCallback(async () => {
     if (isSwitching || !disableCollaboration) return
 
     try {
+      // ✅ SAVE METADATA: Update to solo mode immediately
+      await saveCollaborationMetadataImmediately({
+        enabled: false,
+        mode: 'solo',
+        sessionPersistent: false,
+        lastActivity: new Date().toISOString()
+      });
+
       await disableCollaboration()
       alert('📝 Switched to solo mode.\n\nYour document is now private.')
     } catch (error) {
       console.error('❌ Disable collaboration error:', error)
       alert(`❌ Error switching to solo mode: ${error.message}`)
     }
-  }, [disableCollaboration, isSwitching])
+  }, [disableCollaboration, isSwitching, saveCollaborationMetadataImmediately])
 
   return (
     <div className="flex items-center gap-2">

@@ -12,6 +12,11 @@ class DocumentStorage {
     this.documentsPath = path.join(customBasePath, 'documents');
     this.indexPath = path.join(customBasePath, 'index.json');
     this.settingsPath = path.join(customBasePath, 'settings.json');
+
+    // ✅ NEW: Rate limiting for saves
+    this.lastSaveTimes = new Map();
+    this.lastSavedDocuments = new Map();
+
     this.init();
   }
 
@@ -77,8 +82,22 @@ class DocumentStorage {
     }
   }
 
-  // ✅ ENHANCED: Save Y.js document state with enhanced collaboration metadata
+  // ✅ ENHANCED: Save Y.js document state with rate limiting and fixed content extraction
   async saveDocument(documentId, ydocState, metadata = {}) {
+    // ✅ RATE LIMITING: Prevent rapid saves of same document
+    const now = Date.now();
+    const lastSave = this.lastSaveTimes.get(documentId) || 0;
+
+    if (now - lastSave < 2000) { // 2 second minimum between saves
+      console.log('⚠️ Save rate limited for:', documentId.slice(0, 8) + '...');
+      const cached = this.lastSavedDocuments.get(documentId);
+      if (cached) {
+        return cached; // Return cached result
+      }
+    }
+
+    this.lastSaveTimes.set(documentId, now);
+
     try {
       const docPath = path.join(this.documentsPath, `${documentId}.json`);
       const backupPath = path.join(this.documentsPath, `${documentId}.md`);
@@ -88,6 +107,7 @@ class DocumentStorage {
 
       let plainText = '';
 
+      // ✅ CRITICAL FIX: Enhanced Y.js content extraction with deep debugging
       if (ydocState && ydocState.length > 0) {
         try {
           console.log('🔍 Processing state array length:', ydocState.length);
@@ -101,14 +121,93 @@ class DocumentStorage {
 
           if (tempDoc.share.has(fieldName)) {
             const ytext = tempDoc.share.get(fieldName);
-            const rawContent = ytext.toString();
 
-            console.log('📄 Raw content type:', typeof rawContent);
-            console.log('📄 Raw content length:', rawContent.length);
-            console.log('📄 Raw content preview:', JSON.stringify(rawContent.slice(0, 200)));
+            // ✅ CRITICAL DEBUG: Deep inspection of the Y.Text object
+            console.log('🔍 DEEP Y.Text analysis:', {
+              fieldName,
+              ytextType: ytext.constructor.name,
+              isYText: ytext instanceof Y.Text,
+              hasToString: typeof ytext.toString === 'function',
+              ytextLength: ytext.length,
+              // ✅ CRITICAL: Check what toString actually returns
+              toStringResult: ytext.toString(),
+              toStringType: typeof ytext.toString(),
+              // ✅ CRITICAL: Try alternative extraction methods
+              directAccess: ytext._item ? 'has _item' : 'no _item',
+              internalState: ytext._length || 0,
+              // ✅ CRITICAL: Check if it's actually corrupted during reconstruction
+              reconstructionTest: ytext.toString() === '[object Object]' ? 'CORRUPTED!' : 'OK'
+            });
 
-            // Convert TipTap HTML markup to plain text
-            plainText = this.convertTipTapHtmlToText(rawContent);
+            // ✅ ENHANCED EXTRACTION: Multiple recovery attempts
+            let rawContent = '';
+
+            if (ytext instanceof Y.Text && ytext.toString() !== '[object Object]') {
+              rawContent = ytext.toString();
+              console.log('✅ Normal Y.Text extraction successful');
+            } else {
+              console.error('🚨 Y.Text corrupted during reconstruction!');
+
+              // ✅ ATTEMPT RECOVERY: Try different approaches
+              try {
+                // Method 1: Try toJSON
+                if (typeof ytext.toJSON === 'function') {
+                  const jsonResult = ytext.toJSON();
+                  rawContent = typeof jsonResult === 'string' ? jsonResult : JSON.stringify(jsonResult);
+                  console.log('🔄 Recovery attempt 1 (toJSON):', rawContent.slice(0, 100));
+                }
+
+                // Method 2: Try iterating through the text
+                if (!rawContent || rawContent === '[object Object]') {
+                  let iteratedText = '';
+                  try {
+                    for (let i = 0; i < ytext.length; i++) {
+                      iteratedText += ytext.slice(i, i + 1);
+                    }
+                    if (iteratedText && iteratedText !== '[object Object]') {
+                      rawContent = iteratedText;
+                      console.log('🔄 Recovery attempt 2 (iteration):', rawContent.slice(0, 100));
+                    }
+                  } catch (iterationError) {
+                    console.warn('❌ Iteration method failed:', iterationError);
+                  }
+                }
+
+                // Method 3: Try direct property access
+                if (!rawContent || rawContent === '[object Object]') {
+                  try {
+                    // Check if there's internal text content we can access
+                    const internalContent = ytext._item || ytext._map || ytext.doc;
+                    if (internalContent) {
+                      console.log('🔄 Recovery attempt 3 (internal access):', typeof internalContent);
+                    }
+                  } catch (internalError) {
+                    console.warn('❌ Internal access method failed:', internalError);
+                  }
+                }
+
+                // Method 4: Return empty if all else fails
+                if (!rawContent || rawContent === '[object Object]') {
+                  console.error('❌ All recovery attempts failed, using empty string');
+                  rawContent = '';
+                }
+              } catch (recoveryError) {
+                console.error('❌ Recovery attempts failed:', recoveryError);
+                rawContent = '';
+              }
+            }
+
+            console.log('📄 Final raw content type:', typeof rawContent);
+            console.log('📄 Final raw content length:', rawContent.length);
+            console.log('📄 Final raw content preview:', JSON.stringify(rawContent.slice(0, 200)));
+
+            // ✅ FIXED: Only convert if we have valid content
+            if (rawContent && typeof rawContent === 'string' && rawContent !== '[object Object]') {
+              plainText = this.convertTipTapHtmlToText(rawContent);
+            } else {
+              console.warn('⚠️ No valid content extracted, using empty string');
+              plainText = '';
+            }
 
             console.log('📄 Final extracted text length:', plainText.length);
             console.log('📄 Final extracted text preview:', JSON.stringify(plainText.slice(0, 200)));
@@ -157,6 +256,9 @@ class DocumentStorage {
         // ✅ NEW: Document collaboration mode tracking
         mode: existingCollaboration.mode || (existingCollaboration.enabled ? 'collaborative' : 'solo'),
 
+        // ✅ CRITICAL: Session persistence field
+        sessionPersistent: existingCollaboration.sessionPersistent || false,
+
         // ✅ NEW: Schema version for safe future migrations
         schemaVersion: existingCollaboration.schemaVersion || 2
       };
@@ -188,6 +290,10 @@ class DocumentStorage {
       }
 
       await this.updateIndex(documentId, documentData);
+
+      // ✅ CACHE: Store result for rate limiting
+      this.lastSavedDocuments.set(documentId, documentData);
+
       console.log('💾 Document saved with enhanced collaboration metadata:', documentId, `(${words} words, ${characters} chars)`);
       return documentData;
 
@@ -197,37 +303,55 @@ class DocumentStorage {
     }
   }
 
-  // Convert TipTap HTML markup to plain text
+  // ✅ FIXED: Convert TipTap HTML markup to plain text
   convertTipTapHtmlToText(htmlContent) {
     try {
       if (!htmlContent || typeof htmlContent !== 'string') {
+        console.log('🔧 No content to convert or invalid type');
+        return '';
+      }
+
+      // ✅ FIXED: Check for [object Object] problem
+      if (htmlContent === '[object Object]') {
+        console.error('❌ Received [object Object] - this indicates Y.js extraction failed');
         return '';
       }
 
       console.log('🔧 Converting TipTap HTML to plain text');
       console.log('🔧 Input HTML:', JSON.stringify(htmlContent.slice(0, 100)));
 
-      // Convert TipTap's specific HTML markup to plain text
-      let cleanText = htmlContent
-        // Replace paragraph tags with newlines
-        .replace(/<paragraph[^>]*>/g, '')
-        .replace(/<\/paragraph>/g, '\n')
+      // ✅ ENHANCED: Handle both TipTap HTML and plain text
+      let cleanText = htmlContent;
 
-        // Replace heading tags
-        .replace(/<heading[^>]*>/g, '')
-        .replace(/<\/heading>/g, '\n')
+      // Check if it looks like HTML/XML (contains < and >)
+      if (htmlContent.includes('<') && htmlContent.includes('>')) {
+        console.log('🔧 Processing as HTML/XML content');
 
-        // Replace list items
-        .replace(/<listItem[^>]*>/g, '• ')
-        .replace(/<\/listItem>/g, '\n')
+        cleanText = htmlContent
+          // Replace paragraph tags with newlines
+          .replace(/<paragraph[^>]*>/g, '')
+          .replace(/<\/paragraph>/g, '\n')
 
-        // Replace any remaining HTML tags
-        .replace(/<[^>]+>/g, '')
+          // Replace heading tags
+          .replace(/<heading[^>]*>/g, '')
+          .replace(/<\/heading>/g, '\n')
 
-        // Clean up extra whitespace and newlines
-        .replace(/\n\s*\n\s*\n/g, '\n\n') // Replace triple+ newlines with double
-        .replace(/\n\s*\n/g, '\n\n')      // Normalize double newlines
-        .trim();
+          // Replace list items
+          .replace(/<listItem[^>]*>/g, '• ')
+          .replace(/<\/listItem>/g, '\n')
+
+          // Replace any remaining HTML tags
+          .replace(/<[^>]+>/g, '')
+
+          // Clean up extra whitespace and newlines
+          .replace(/\n\s*\n\s*\n/g, '\n\n') // Replace triple+ newlines with double
+          .replace(/\n\s*\n/g, '\n\n')      // Normalize double newlines
+          .trim();
+      } else {
+        console.log('🔧 Processing as plain text content');
+        // It's already plain text, just clean up whitespace
+        cleanText = htmlContent.trim();
+      }
 
       console.log('🔧 Output text length:', cleanText.length);
       console.log('🔧 Output text preview:', JSON.stringify(cleanText.slice(0, 100)));
@@ -271,6 +395,7 @@ class DocumentStorage {
           collaboration: documentData.collaboration || {
             enabled: false,
             mode: 'solo',
+            sessionPersistent: false, // ✅ Default to false for legacy docs
             schemaVersion: 1, // Mark as legacy document
             links: { permanent: [], oneTime: [] },
             participants: [],
@@ -304,6 +429,7 @@ class DocumentStorage {
           hasCollaboration: !!loaded?.metadata?.collaboration,
           collaborationSchema: loaded?.metadata?.collaboration?.schemaVersion || 1,
           mode: loaded?.metadata?.collaboration?.mode || 'solo',
+          sessionPersistent: loaded?.metadata?.collaboration?.sessionPersistent || false,
           hasLinks: !!(loaded?.metadata?.collaboration?.links),
           permanentLinks: loaded?.metadata?.collaboration?.links?.permanent?.length || 0,
           oneTimeLinks: loaded?.metadata?.collaboration?.links?.oneTime?.length || 0
@@ -415,6 +541,10 @@ class DocumentStorage {
       delete index[documentId];
       await this.saveIndex(index);
 
+      // ✅ CLEANUP: Remove from cache
+      this.lastSaveTimes.delete(documentId);
+      this.lastSavedDocuments.delete(documentId);
+
       console.log('🗑️ Document deleted:', documentId);
       return true;
     } catch (error) {
@@ -442,8 +572,14 @@ class DocumentStorage {
         const fieldName = `editor-${documentId}`;
         if (tempDoc.share.has(fieldName)) {
           const ytext = tempDoc.share.get(fieldName);
-          const rawContent = ytext.toString();
-          content = this.convertTipTapHtmlToText(rawContent);
+
+          // ✅ FIXED: Use same extraction logic as saveDocument
+          if (ytext instanceof Y.Text) {
+            const rawContent = ytext.toString();
+            if (rawContent && rawContent !== '[object Object]') {
+              content = this.convertTipTapHtmlToText(rawContent);
+            }
+          }
         }
       }
 

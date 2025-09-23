@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useCallback, useState } from "react"
+import { useEffect, useCallback, useState, useMemo } from "react"
 import { EditorContent } from "@tiptap/react"
 import { useCollaboration } from "./hooks/useCollaboration"
 import EditorToolbar from "./EditorToolbar"
@@ -22,8 +22,26 @@ function EditorContainerContent({
   connectionStatus,
   activePeers
 }) {
-  // ✅ ONLY USE COLLABORATION HOOK FOR EDITOR
-  const { editor, saveStatus, saveDocument, editorError, fieldName } = useCollaboration(ydoc, provider, documentId, title, standardFieldName)
+  // ✅ BUILD COLLABORATION STATE OBJECT FROM PROPS
+  const collaborationState = useMemo(() => ({
+    isCollaborationMode,
+    collaborationToken,
+    isSwitching,
+    peerCount,
+    connectionStatus,
+    activePeers,
+    standardFieldName
+  }), [isCollaborationMode, collaborationToken, isSwitching, peerCount, connectionStatus, activePeers, standardFieldName]);
+
+  // ✅ PASS COLLABORATION STATE TO HOOK
+  const { editor, saveStatus, saveDocument, editorError, fieldName } = useCollaboration(
+    ydoc,
+    provider,
+    documentId,
+    title,
+    standardFieldName,
+    collaborationState // ✅ NOW PROPERLY DEFINED
+  )
 
   // ✅ ERROR STATE MANAGEMENT
   const [criticalError, setCriticalError] = useState(false)
@@ -40,10 +58,11 @@ function EditorContainerContent({
         expectedRoom: `collab-${documentId}`,
         peerCount,
         connectionStatus,
-        isSwitching
+        isSwitching,
+        collaborationState: !!collaborationState
       });
     }
-  }, [documentId, isCollaborationMode, peerCount, connectionStatus, isSwitching]);
+  }, [documentId, isCollaborationMode, peerCount, connectionStatus, isSwitching, collaborationState]);
 
   // ✅ LONG-TERM ERROR HANDLING: Classify errors properly
   useEffect(() => {
@@ -339,6 +358,7 @@ function EditorContainerContent({
                       <p>Y.js: {!!ydoc ? '✅' : '⏳'}</p>
                       <p>Provider: {!!provider ? '✅' : '⏳'}</p>
                       <p>Editor: {!!editor ? '✅' : '⏳'}</p>
+                      <p>ColabState: {!!collaborationState ? '✅' : '⏳'}</p>
                     </div>
                   )}
                 </div>
@@ -358,6 +378,7 @@ function EditorContainerContent({
                 <span>Warnings: <code>{warningCount}</code></span>
                 <span>Status: <code>{criticalError ? 'Error' : shouldShowWarning ? 'Warning' : 'OK'}</code></span>
                 <span>Token: <code>{collaborationToken ? 'Yes' : 'No'}</code></span>
+                <span>CollabState: <code>{!!collaborationState ? 'Ready' : 'Missing'}</code></span>
               </div>
             </div>
           )}

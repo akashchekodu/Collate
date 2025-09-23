@@ -215,7 +215,24 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('documents:save', async (event, documentId, state, metadata) => {
     try {
+      // ✅ CRITICAL DEBUG: Log every save call with stack trace
+      console.log('🔍 IPC SAVE CALLED #' + Date.now() % 10000, {
+        documentId: documentId.slice(0, 8) + '...',
+        hasState: !!state,
+        stateLength: state?.length || 0,
+        metadataKeys: Object.keys(metadata || {}),
+        collaborationMode: metadata?.collaboration?.mode,
+        timestamp: new Date().toISOString()
+      });
+
+      // ✅ STACK TRACE: See what's triggering multiple saves
+      const stack = new Error().stack;
+      const caller = stack.split('\n')[2];
+      console.log('🔍 Save triggered by:', caller);
+
       const result = await documentStorage.saveDocument(documentId, state, metadata);
+
+      console.log('✅ IPC SAVE COMPLETED:', documentId.slice(0, 8) + '...');
       return {
         id: result.id,
         title: result.title,

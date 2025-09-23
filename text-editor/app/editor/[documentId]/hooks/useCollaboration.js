@@ -1,15 +1,42 @@
 "use client"
 import { useEditor } from "@tiptap/react"
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useMemo } from "react"
 import { createEditorExtensions, editorProps } from "../config/editorConfig"
 import { useDocumentPersistence } from "../../../hooks/useDocumentPersistence"
 import * as Y from 'yjs'
 import { useCallback } from "react"
 
-export function useCollaboration(ydoc, provider, documentId, title = "Untitled Document", standardFieldName) {
+export function useCollaboration(ydoc, provider, documentId, title = "Untitled Document", standardFieldName, collaborationState = null) {
   const [initialContent, setInitialContent] = useState(null)
   const [editorError, setEditorError] = useState(null)
-  const { saveDocument, loadDocument, saveStatus } = useDocumentPersistence(ydoc, documentId, title)
+
+  const collaborationMetadata = useMemo(() => {
+    if (!collaborationState) return null;
+
+    return {
+      enabled: collaborationState.isCollaborationMode || false,
+      mode: collaborationState.isCollaborationMode ? 'collaborative' : 'solo',
+      sessionPersistent: true, // Since we're in collaboration mode
+      roomId: `collab-${documentId}`,
+      fieldName: standardFieldName,
+      createdAt: new Date().toISOString(),
+      lastActivity: new Date().toISOString(),
+
+      // ✅ Token and link management  
+      link: collaborationState.collaborationToken ? {
+        token: collaborationState.collaborationToken,
+        url: `${window.location.origin}/editor/${documentId}?token=${collaborationState.collaborationToken}`,
+        createdAt: new Date().toISOString()
+      } : null,
+
+      // ✅ Enhanced structure (initialized empty, populated by services)
+      links: { permanent: [], oneTime: [] },
+      participants: [],
+      revoked: [],
+      schemaVersion: 2
+    };
+  }, [collaborationState, documentId, standardFieldName]);
+  const { saveDocument, loadDocument, saveStatus } = useDocumentPersistence(ydoc, documentId, title, collaborationMetadata)
   const isLoadedRef = useRef(false)
   const errorCountRef = useRef(0)
 
@@ -23,14 +50,17 @@ export function useCollaboration(ydoc, provider, documentId, title = "Untitled D
     hasProvider: !!provider
   });
 
+
+
+
   // Safe Y.Text getter with standard field name
   const getYText = useCallback(() => {
     if (!ydoc || !documentId) return null;
-    
+
     if (ydoc.share.has(fieldName)) {
       return ydoc.share.get(fieldName);
     }
-    
+
     console.log('🆕 Creating standard Y.Text field for persistence:', fieldName);
     return ydoc.getText(fieldName);
   }, [ydoc, documentId, fieldName]);
@@ -45,7 +75,7 @@ export function useCollaboration(ydoc, provider, documentId, title = "Untitled D
         }
         return
       }
-      
+
       try {
         const savedDoc = await loadDocument()
         if (savedDoc && savedDoc.state) {
@@ -56,7 +86,7 @@ export function useCollaboration(ydoc, provider, documentId, title = "Untitled D
       } catch (error) {
         console.warn('Failed to load document:', error)
       }
-      
+
       setInitialContent(true)
       isLoadedRef.current = true
     }
@@ -68,7 +98,7 @@ export function useCollaboration(ydoc, provider, documentId, title = "Untitled D
   const handleEditorError = useCallback((error, context = 'unknown') => {
     errorCountRef.current += 1;
     console.error(`❌ Editor error #${errorCountRef.current} (${context}):`, error);
-    
+
     if (errorCountRef.current >= 3) {
       setEditorError(`Collaboration error: ${error.message || error}`);
     }
@@ -161,7 +191,7 @@ export function useCollaboration(ydoc, provider, documentId, title = "Untitled D
       }, 500)
       return () => clearTimeout(timeout)
     }
-    
+
     return cleanup
   }, [ydoc, editor, documentId, fieldName, editorError, getYText, handleEditorError])
 

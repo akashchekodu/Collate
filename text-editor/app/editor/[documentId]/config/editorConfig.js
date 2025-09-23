@@ -10,7 +10,7 @@ export function createEditorExtensions(ydoc, provider, documentId, standardField
   }
 
   const fieldName = standardFieldName || `editor-${documentId}`;
-  
+
   console.log('📝 TipTap using STANDARD field:', {
     fieldName,
     documentId: documentId.slice(0, 8) + '...',
@@ -18,49 +18,101 @@ export function createEditorExtensions(ydoc, provider, documentId, standardField
     fieldExists: ydoc.share.has(fieldName)
   });
 
+  // ✅ ENHANCED: Pre-flight field validation
+  validateFieldCompatibility(ydoc, fieldName);
+
   const extensions = [
     StarterKit.configure({
       history: false, // Critical for collaboration
     }),
-    
-    // ✅ FIXED: Add collision detection and recovery
+
+    // ✅ ENHANCED: Collaboration with comprehensive error handling
     Collaboration.configure({
       document: ydoc,
       field: fieldName,
-      // ✅ CRITICAL: Handle transform conflicts gracefully
+
+      // ✅ CRITICAL: Enhanced update handler
       onUpdate: ({ editor, transaction }) => {
         if (transaction.docChanged) {
-          // ✅ Silently handle sync conflicts
           try {
-            // Check if document is in a valid state
+            // Validate document state
             const doc = transaction.doc;
             if (!doc || doc.content.size < 0) {
               console.warn('⚠️ Invalid document state detected, skipping update');
-              return false; // Prevent invalid update
+              return false;
             }
+
+            // Additional safety checks
+            if (transaction.steps && transaction.steps.length > 100) {
+              console.warn('⚠️ Unusually large transaction, monitoring for performance');
+            }
+
           } catch (error) {
-            console.warn('⚠️ Sync conflict handled:', error.message);
-            return false; // Prevent crash
+            console.warn('⚠️ Sync conflict handled gracefully:', error.message);
+            return false;
           }
         }
       },
-      // ✅ CRITICAL: Handle load errors
+
+      // ✅ ENHANCED: Document loading with field conflict resolution
       onLoadDocument: (doc) => {
         try {
+          console.log('📝 TipTap loading document into field:', fieldName);
+
+          // Validate the document structure
+          if (!doc || typeof doc.content === 'undefined') {
+            console.warn('⚠️ Invalid document structure, using empty document');
+            return null;
+          }
+
           return doc;
         } catch (error) {
-          console.warn('⚠️ Document load error handled:', error.message);
+          console.error('❌ TipTap document load error:', error);
+
+          // ✅ FIELD CONFLICT RESOLUTION
+          if (error.message && error.message.includes('already been defined')) {
+            console.log('🔄 Attempting field conflict resolution...');
+
+            try {
+              // Clear the problematic field
+              if (ydoc.share.has(fieldName)) {
+                const existingField = ydoc.share.get(fieldName);
+                console.log('🔍 Conflicting field type:', existingField.constructor.name);
+
+                ydoc.share.delete(fieldName);
+                console.log('✅ Cleared conflicting field, TipTap should retry');
+
+                // Force a small delay to let Y.js settle
+                setTimeout(() => {
+                  console.log('🔄 Field conflict resolution completed');
+                }, 100);
+              }
+            } catch (clearError) {
+              console.error('❌ Field clearing failed:', clearError);
+            }
+          }
+
           return null; // Return null to use empty document
+        }
+      },
+
+      // ✅ NEW: Error handler for collaboration issues
+      onError: (error) => {
+        console.error('❌ Collaboration extension error:', error);
+
+        // Don't crash the editor, just log the error
+        if (error.message && error.message.includes('already been defined')) {
+          console.log('🔄 Field conflict detected in onError, will be resolved');
         }
       }
     }),
-    
+
     Placeholder.configure({
       placeholder: "Start typing — other users' cursors will appear here",
     }),
   ];
 
-  // ✅ SAFE: Cursors with error handling
+  // ✅ ENHANCED: Safer cursor rendering
   if (cursorsEnabled && provider?.awareness) {
     try {
       extensions.push(
@@ -68,14 +120,11 @@ export function createEditorExtensions(ydoc, provider, documentId, standardField
           provider,
           render: (user) => {
             try {
-              console.log('🎯 Rendering cursor for:', user.name, 'color:', user.color);
-              
               const cursor = document.createElement("span");
               cursor.classList.add("collaboration-cursor__caret");
-              
-              const userColor = user.color || "#FF0000";
-              
-              // ✅ SAFE: Cursor styling with error handling
+
+              const userColor = user.color || `#${Math.floor(Math.random() * 16777215).toString(16)}`;
+
               cursor.setAttribute("style", `
                 border-left: 3px solid ${userColor} !important;
                 border-color: ${userColor} !important;
@@ -83,50 +132,96 @@ export function createEditorExtensions(ydoc, provider, documentId, standardField
                 margin-left: -1px !important;
                 position: relative !important;
                 display: inline-block !important;
+                z-index: 100 !important;
               `);
-              
-              cursor.setAttribute("title", `${user.name || 'Anonymous User'}'s cursor`);
-              
-              // ✅ SAFE: User label with error handling
-              const label = document.createElement("div");
-              label.textContent = user.name || 'Anonymous';
-              label.setAttribute("style", `
-                position: absolute !important;
-                top: -25px !important;
-                left: -10px !important;
-                background: ${userColor} !important;
-                color: white !important;
-                padding: 2px 6px !important;
-                border-radius: 3px !important;
-                font-size: 11px !important;
-                font-weight: bold !important;
-                white-space: nowrap !important;
-                z-index: 1000 !important;
-                pointer-events: none !important;
-              `);
-              
-              cursor.appendChild(label);
-              
+
+              cursor.setAttribute("title", `${user.name || 'Anonymous'}'s cursor`);
+
+              // ✅ ENHANCED: Better label positioning
+              if (user.name) {
+                const label = document.createElement("div");
+                label.textContent = user.name;
+                label.setAttribute("style", `
+                  position: absolute !important;
+                  top: -28px !important;
+                  left: -8px !important;
+                  background: ${userColor} !important;
+                  color: white !important;
+                  padding: 3px 7px !important;
+                  border-radius: 4px !important;
+                  font-size: 11px !important;
+                  font-weight: 600 !important;
+                  white-space: nowrap !important;
+                  z-index: 1001 !important;
+                  pointer-events: none !important;
+                  box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+                  max-width: 100px !important;
+                  overflow: hidden !important;
+                  text-overflow: ellipsis !important;
+                `);
+
+                cursor.appendChild(label);
+              }
+
               return cursor;
             } catch (error) {
               console.warn('❌ Cursor render error:', error);
-              // ✅ FALLBACK: Simple cursor
+
+              // ✅ MINIMAL FALLBACK: Simple cursor
               const fallbackCursor = document.createElement("span");
-              fallbackCursor.style.borderLeft = "2px solid red";
-              fallbackCursor.style.height = "1em";
+              fallbackCursor.style.cssText = `
+                border-left: 2px solid #ff0000 !important;
+                height: 1em !important;
+                display: inline-block !important;
+              `;
               return fallbackCursor;
             }
           },
         })
       );
-      console.log('🎯 Safe cursors enabled for field:', fieldName);
+      console.log('🎯 Enhanced cursors enabled for field:', fieldName);
     } catch (error) {
       console.error('❌ Failed to add collaboration cursors:', error);
     }
   }
 
-  console.log('✅ Safe collaboration extensions created');
+  console.log('✅ Enhanced collaboration extensions created');
   return extensions;
+}
+
+// ✅ NEW: Field compatibility validation
+function validateFieldCompatibility(ydoc, fieldName) {
+  try {
+    if (ydoc.share.has(fieldName)) {
+      const existingField = ydoc.share.get(fieldName);
+      const fieldType = existingField.constructor.name;
+
+      console.log('🔍 Field validation:', {
+        fieldName,
+        existingType: fieldType,
+        isCompatible: fieldType === 'YXmlFragment',
+        needsConversion: fieldType === 'YText'
+      });
+
+      // ✅ WARN: If incompatible type detected
+      if (fieldType !== 'YXmlFragment') {
+        console.warn('⚠️ Field type incompatible with TipTap:', {
+          fieldName,
+          currentType: fieldType,
+          expectedType: 'YXmlFragment',
+          recommendation: 'Field should be cleared before TipTap initialization'
+        });
+
+        // ✅ AUTO-FIX: Clear incompatible fields
+        console.log('🔄 Auto-clearing incompatible field for TipTap');
+        ydoc.share.delete(fieldName);
+        console.log('✅ Field cleared, TipTap will create compatible type');
+      }
+    }
+  } catch (error) {
+    console.error('❌ Field validation failed:', error);
+    // Continue anyway - TipTap might handle it
+  }
 }
 
 export const editorProps = {
@@ -134,22 +229,48 @@ export const editorProps = {
     class: "prose-editor-content",
     spellcheck: "false",
   },
-  // ✅ CRITICAL: Handle transform errors at ProseMirror level
+
+  // ✅ ENHANCED: Better paste handling
   transformPastedHTML: (html) => {
     try {
-      return html;
+      // Basic sanitization
+      if (!html || typeof html !== 'string') return '';
+
+      // Remove potentially problematic elements
+      const cleaned = html
+        .replace(/<script[^>]*>.*?<\/script>/gi, '')
+        .replace(/<style[^>]*>.*?<\/style>/gi, '')
+        .replace(/on\w+="[^"]*"/gi, ''); // Remove event handlers
+
+      return cleaned;
     } catch (error) {
-      console.warn('⚠️ Paste transform error handled:', error);
-      return ''; // Return empty string on error
+      console.warn('⚠️ HTML transform error:', error);
+      return '';
     }
   },
-  // ✅ CRITICAL: Handle paste errors
+
+  // ✅ ENHANCED: Paste error handling
   handlePaste: (view, event, slice) => {
     try {
-      // Let TipTap handle normally
+      // Let TipTap handle normally, but with error protection
       return false;
     } catch (error) {
-      console.warn('⚠️ Paste error handled:', error);
+      console.warn('⚠️ Paste operation error:', error);
+
+      // Prevent crash by handling the paste manually if needed
+      try {
+        const text = event.clipboardData?.getData('text/plain') || '';
+        if (text) {
+          // Insert as plain text fallback
+          const { state, dispatch } = view;
+          const { from } = state.selection;
+          dispatch(state.tr.insertText(text, from));
+          return true; // Prevent default
+        }
+      } catch (fallbackError) {
+        console.warn('⚠️ Paste fallback failed:', fallbackError);
+      }
+
       return true; // Prevent crash
     }
   }
