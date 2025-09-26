@@ -108,119 +108,112 @@ class DocumentStorage {
       let plainText = '';
 
       // ✅ CRITICAL FIX: Enhanced Y.js content extraction with deep debugging
-      if (ydocState && ydocState.length > 0) {
+// ✅ ENHANCED Y.js reconstruction with corruption detection and recovery
+if (ydocState && ydocState.length > 0) {
+  try {
+    console.log('🔍 Processing state array length:', ydocState.length);
+    const state = new Uint8Array(ydocState);
+    const tempDoc = new Y.Doc();
+    Y.applyUpdate(tempDoc, state);
+
+    const fieldName = `editor-${documentId}`;
+    console.log('🔍 Reconstructing field:', fieldName);
+    console.log('🔍 Available shared types:', Array.from(tempDoc.share.keys()));
+
+    if (tempDoc.share.has(fieldName)) {
+      const ytext = tempDoc.share.get(fieldName);
+      
+      // ✅ ENHANCED: Better corruption detection and type handling
+      console.log('🔍 DEEP Y.Text analysis:', {
+        fieldName,
+        ytextType: ytext.constructor.name,
+        isYText: ytext instanceof Y.Text,
+        isYXmlFragment: ytext.constructor.name === 'YXmlFragment',
+        isAbstractType: ytext.constructor.name === 'AbstractType',
+        hasToString: typeof ytext.toString === 'function',
+        ytextLength: ytext.length,
+        reconstructionTest: ytext.toString() === '[object Object]' ? 'CORRUPTED!' : 'OK'
+      });
+
+      let rawContent = '';
+      
+      // ✅ SPECIFIC HANDLING: For different Y.js types
+      if (ytext instanceof Y.Text) {
+        rawContent = ytext.toString();
+        console.log('✅ Y.Text extraction successful');
+      } else if (ytext.constructor.name === 'YXmlFragment') {
+        // Handle TipTap's XmlFragment
         try {
-          console.log('🔍 Processing state array length:', ydocState.length);
-          const state = new Uint8Array(ydocState);
-          const tempDoc = new Y.Doc();
-          Y.applyUpdate(tempDoc, state);
-
-          const fieldName = `editor-${documentId}`;
-          console.log('🔍 Reconstructing field:', fieldName);
-          console.log('🔍 Available shared types:', Array.from(tempDoc.share.keys()));
-
-          if (tempDoc.share.has(fieldName)) {
-            const ytext = tempDoc.share.get(fieldName);
-
-            // ✅ CRITICAL DEBUG: Deep inspection of the Y.Text object
-            console.log('🔍 DEEP Y.Text analysis:', {
-              fieldName,
-              ytextType: ytext.constructor.name,
-              isYText: ytext instanceof Y.Text,
-              hasToString: typeof ytext.toString === 'function',
-              ytextLength: ytext.length,
-              // ✅ CRITICAL: Check what toString actually returns
-              toStringResult: ytext.toString(),
-              toStringType: typeof ytext.toString(),
-              // ✅ CRITICAL: Try alternative extraction methods
-              directAccess: ytext._item ? 'has _item' : 'no _item',
-              internalState: ytext._length || 0,
-              // ✅ CRITICAL: Check if it's actually corrupted during reconstruction
-              reconstructionTest: ytext.toString() === '[object Object]' ? 'CORRUPTED!' : 'OK'
-            });
-
-            // ✅ ENHANCED EXTRACTION: Multiple recovery attempts
-            let rawContent = '';
-
-            if (ytext instanceof Y.Text && ytext.toString() !== '[object Object]') {
-              rawContent = ytext.toString();
-              console.log('✅ Normal Y.Text extraction successful');
-            } else {
-              console.error('🚨 Y.Text corrupted during reconstruction!');
-
-              // ✅ ATTEMPT RECOVERY: Try different approaches
+          rawContent = ytext.toString();
+          console.log('✅ YXmlFragment extraction successful');
+        } catch (xmlError) {
+          console.warn('❌ YXmlFragment extraction failed:', xmlError);
+          rawContent = '';
+        }
+      } else if (ytext.constructor.name === 'AbstractType') {
+        console.error('🚨 CRITICAL: AbstractType detected - field is corrupted');
+        
+        // ✅ CORRUPTION RECOVERY: Try to extract any available data
+        try {
+          // Method 1: Try toJSON
+          if (typeof ytext.toJSON === 'function') {
+            const jsonData = ytext.toJSON();
+            rawContent = typeof jsonData === 'string' ? jsonData : JSON.stringify(jsonData);
+            console.log('🔄 Corruption recovery via toJSON:', rawContent.slice(0, 100));
+          }
+          
+          // Method 2: Try direct access to internal properties
+          if (!rawContent || rawContent === '[object Object]') {
+            // Check for internal Y.js structure
+            if (ytext._start && ytext._start.content && typeof ytext._start.content.getContent === 'function') {
               try {
-                // Method 1: Try toJSON
-                if (typeof ytext.toJSON === 'function') {
-                  const jsonResult = ytext.toJSON();
-                  rawContent = typeof jsonResult === 'string' ? jsonResult : JSON.stringify(jsonResult);
-                  console.log('🔄 Recovery attempt 1 (toJSON):', rawContent.slice(0, 100));
-                }
-
-                // Method 2: Try iterating through the text
-                if (!rawContent || rawContent === '[object Object]') {
-                  let iteratedText = '';
-                  try {
-                    for (let i = 0; i < ytext.length; i++) {
-                      iteratedText += ytext.slice(i, i + 1);
-                    }
-                    if (iteratedText && iteratedText !== '[object Object]') {
-                      rawContent = iteratedText;
-                      console.log('🔄 Recovery attempt 2 (iteration):', rawContent.slice(0, 100));
-                    }
-                  } catch (iterationError) {
-                    console.warn('❌ Iteration method failed:', iterationError);
-                  }
-                }
-
-                // Method 3: Try direct property access
-                if (!rawContent || rawContent === '[object Object]') {
-                  try {
-                    // Check if there's internal text content we can access
-                    const internalContent = ytext._item || ytext._map || ytext.doc;
-                    if (internalContent) {
-                      console.log('🔄 Recovery attempt 3 (internal access):', typeof internalContent);
-                    }
-                  } catch (internalError) {
-                    console.warn('❌ Internal access method failed:', internalError);
-                  }
-                }
-
-                // Method 4: Return empty if all else fails
-                if (!rawContent || rawContent === '[object Object]') {
-                  console.error('❌ All recovery attempts failed, using empty string');
-                  rawContent = '';
-                }
-              } catch (recoveryError) {
-                console.error('❌ Recovery attempts failed:', recoveryError);
-                rawContent = '';
+                const internalContent = ytext._start.content.getContent();
+                rawContent = Array.isArray(internalContent) ? internalContent.join('') : String(internalContent);
+                console.log('🔄 Corruption recovery via internal access:', rawContent.slice(0, 100));
+              } catch (internalError) {
+                console.warn('❌ Internal access failed:', internalError);
               }
             }
-
-            console.log('📄 Final raw content type:', typeof rawContent);
-            console.log('📄 Final raw content length:', rawContent.length);
-            console.log('📄 Final raw content preview:', JSON.stringify(rawContent.slice(0, 200)));
-
-            // ✅ FIXED: Only convert if we have valid content
-            if (rawContent && typeof rawContent === 'string' && rawContent !== '[object Object]') {
-              plainText = this.convertTipTapHtmlToText(rawContent);
-            } else {
-              console.warn('⚠️ No valid content extracted, using empty string');
-              plainText = '';
-            }
-
-            console.log('📄 Final extracted text length:', plainText.length);
-            console.log('📄 Final extracted text preview:', JSON.stringify(plainText.slice(0, 200)));
-
-          } else {
-            console.warn('⚠️ Field not found in reconstructed document:', fieldName);
           }
-
-        } catch (error) {
-          console.error('❌ Error reconstructing Y.js state:', error);
-          plainText = '';
+        } catch (recoveryError) {
+          console.error('❌ Corruption recovery failed:', recoveryError);
+          rawContent = '';
+        }
+      } else {
+        console.warn('⚠️ Unknown Y.js type:', ytext.constructor.name);
+        
+        try {
+          rawContent = ytext.toString();
+        } catch (unknownError) {
+          console.error('❌ Unknown type extraction failed:', unknownError);
+          rawContent = '';
         }
       }
+
+      console.log('📄 Final raw content type:', typeof rawContent);
+      console.log('📄 Final raw content length:', rawContent?.length || 0);
+      console.log('📄 Final raw content preview:', JSON.stringify((rawContent || '').slice(0, 200)));
+
+      // ✅ SAFE: Only convert if we have valid content
+      if (rawContent && typeof rawContent === 'string' && rawContent !== '[object Object]') {
+        plainText = this.convertTipTapHtmlToText(rawContent);
+      } else {
+        console.warn('⚠️ No valid content extracted, using empty string');
+        plainText = '';
+      }
+
+      console.log('📄 Final extracted text length:', plainText.length);
+      console.log('📄 Final extracted text preview:', JSON.stringify(plainText.slice(0, 200)));
+
+    } else {
+      console.warn('⚠️ Field not found in reconstructed document:', fieldName);
+    }
+
+  } catch (error) {
+    console.error('❌ Error reconstructing Y.js state:', error);
+    plainText = '';
+  }
+}
 
       // Calculate statistics
       const words = plainText.trim() ? plainText.trim().split(/\s+/).length : 0;

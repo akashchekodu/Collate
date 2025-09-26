@@ -21,6 +21,7 @@ export class CollaborationService {
     console.log('  - electronAPI exists:', typeof window !== 'undefined' && !!window.electronAPI);
     console.log('  - electronAPI.isElectron:', typeof window !== 'undefined' && window.electronAPI?.isElectron);
     console.log('  - electronAPI.documents:', typeof window !== 'undefined' && !!window.electronAPI?.documents);
+    console.log('  - Has updateCollaborationMetadata:', typeof window !== 'undefined' && !!window.electronAPI?.documents?.updateCollaborationMetadata);
     console.log('  - SIGNALING_SERVER:', COLLABORATION_CONFIG.SIGNALING_SERVER);
     console.log('  - LinkGenerator initialized:', this.linkGenerator.initialized);
   }
@@ -40,17 +41,21 @@ export class CollaborationService {
     try {
       const linkData = await this.linkGenerator.generateCollaborationLink(documentId, permissions);
 
-      // Save collaboration metadata with session persistence
-      await this.saveCollaborationMetadata(documentId, {
+      // ✅ ENHANCED: Save with immediate metadata update method
+      await this.saveCollaborationMetadataImmediate(documentId, {
         enabled: true,
-        mode: 'collaborative', // ✅ CHANGED: Remove "permanently-" prefix
+        mode: 'collaborative',
         roomId: linkData.roomId,
         fieldName: linkData.fieldName,
         createdAt: linkData.createdAt,
-        lastActivity: Date.now(),
+        lastActivity: new Date().toISOString(),
         permissions: permissions,
         link: linkData,
-        sessionPersistent: true // ✅ NEW: Track session persistence
+        sessionPersistent: true, // ✅ Critical for persistence
+        links: { permanent: [], oneTime: [] },
+        participants: [],
+        revoked: [],
+        schemaVersion: 2
       });
 
       console.log('✅ Collaboration link generated successfully:', linkData.url);
@@ -70,16 +75,18 @@ export class CollaborationService {
     console.log('🔄 Disabling collaboration for document:', documentId);
 
     try {
-      let collaborationData = await this.getCollaborationData(documentId);
+      // ✅ ENHANCED: Use immediate metadata update
+      const success = await this.saveCollaborationMetadataImmediate(documentId, {
+        enabled: false,
+        mode: 'solo',
+        sessionPersistent: false,
+        disabledAt: new Date().toISOString(),
+        lastActivity: new Date().toISOString(),
+        link: null, // Clear the link
+        schemaVersion: 2
+      });
 
-      if (collaborationData) {
-        // ✅ CLEAR: Session persistence and collaboration state
-        collaborationData.enabled = false;
-        collaborationData.mode = 'solo';
-        collaborationData.sessionPersistent = false;
-        collaborationData.disabledAt = Date.now();
-
-        await this.saveCollaborationMetadata(documentId, collaborationData);
+      if (success) {
         console.log('✅ Collaboration disabled successfully');
         return true;
       }
@@ -115,174 +122,83 @@ export class CollaborationService {
   }
 
   /**
-   * ✅ ADD: Generate permanent link (legacy compatibility method)
+   * ✅ ENHANCED: Immediate metadata saving with new IPC method
    */
-  async generatePermanentLink(documentId, roomId = null, permissions = ['read', 'write']) {
-    console.log('🔗 generatePermanentLink called - delegating to generateCollaborationLink');
-    return await this.generateCollaborationLink(documentId, permissions);
-  }
-
-  /**
-   * ✅ ADD: Generate invitation link (legacy compatibility method)  
-   */
-  async generateInvitationLink(documentId, roomId = null, permissions = ['read', 'write'], recipientName = null) {
-    console.log('🔗 generateInvitationLink called - delegating to generateCollaborationLink');
-    return await this.generateCollaborationLink(documentId, permissions);
-  }
-
-  /**
-   * ✅ NEW: Generate one-time invitation link
-   */
-  async generateOneTimeInvitation(documentId, recipientName = null) {
-    if (!this._initialized) this.initialize();
-
-    console.log('🎫 Generating one-time invitation for:', documentId, 'recipient:', recipientName);
-
-    try {
-      // Generate the link
-      const linkData = await this.linkGenerator.generateOneTimeLink(documentId, recipientName);
-
-      // Get current collaboration data
-      let collaborationData = await this.getCollaborationData(documentId);
-
-      if (!collaborationData) {
-        // Enable collaboration if not already enabled
-        collaborationData = await this.enableCollaboration(documentId);
-      }
-
-      // Ensure links structure exists
-      if (!collaborationData.links) {
-        collaborationData.links = { permanent: [], oneTime: [] };
-      }
-
-      // Add to one-time links array
-      collaborationData.links.oneTime.push(linkData);
-      collaborationData.lastActivity = Date.now();
-
-      // Save to storage
-      await this.saveCollaborationMetadata(documentId, collaborationData);
-
-      console.log('✅ One-time invitation created and saved');
-      return linkData;
-
-    } catch (error) {
-      console.error('❌ Failed to generate one-time invitation:', error);
-      return null;
+  async saveCollaborationMetadataImmediate(documentId, collaborationData) {
+    if (!documentId) {
+      console.error('❌ No documentId provided for metadata save');
+      return false;
     }
-  }
-
-  /**
-   * ✅ NEW: Generate long-expiry permanent link
-   */
-  async generateLongExpiryLink(documentId, permissions = ['read', 'write']) {
-    if (!this._initialized) this.initialize();
-
-    console.log('🔗 Generating long-expiry link for:', documentId, 'permissions:', permissions);
 
     try {
-      // Generate the link
-      const linkData = await this.linkGenerator.generateLongExpiryLink(documentId, permissions);
+      console.log('💾 Saving collaboration metadata immediately:', {
+        documentId: documentId.slice(0, 8) + '...',
+        mode: collaborationData.mode,
+        enabled: collaborationData.enabled,
+        sessionPersistent: collaborationData.sessionPersistent
+      });
 
-      // Get current collaboration data
-      let collaborationData = await this.getCollaborationData(documentId);
+      if (this.isElectron && window.electronAPI?.documents?.updateCollaborationMetadata) {
+        // ✅ PREFERRED: Use new immediate IPC method
+        const success = await window.electronAPI.documents.updateCollaborationMetadata(
+          documentId, 
+          collaborationData
+        );
 
-      if (!collaborationData) {
-        // Enable collaboration if not already enabled
-        collaborationData = await this.enableCollaboration(documentId);
+        if (success) {
+          console.log('✅ Immediate metadata save via IPC successful');
+          return true;
+        } else {
+          console.warn('⚠️ IPC metadata save failed, trying fallback');
+          // Fall through to legacy method
+        }
       }
 
-      // Ensure links structure exists
-      if (!collaborationData.links) {
-        collaborationData.links = { permanent: [], oneTime: [] };
-      }
+      // ✅ FALLBACK: Use legacy save method
+      if (this.isElectron && window.electronAPI?.documents) {
+        console.log('💾 Using legacy Electron save method');
+        const currentDoc = await window.electronAPI.documents.load(documentId);
+        if (currentDoc) {
+          const updatedMetadata = {
+            ...currentDoc.metadata,
+            collaboration: {
+              ...currentDoc.metadata?.collaboration,
+              ...collaborationData
+            },
+            lastModified: new Date().toISOString()
+          };
+          await window.electronAPI.documents.save(documentId, currentDoc.state, updatedMetadata);
+          console.log('✅ Legacy Electron save successful');
+          return true;
+        }
+      } else {
+        // ✅ BROWSER: Use browser storage
+        console.log('💾 Saving to browser storage');
+        const browserDocs = this.getBrowserStorage();
+        const docData = browserDocs.get(documentId) || {
+          title: 'Untitled Document',
+          created: Date.now()
+        };
 
-      // Add to permanent links array
-      collaborationData.links.permanent.push(linkData);
-      collaborationData.lastActivity = Date.now();
+        docData.collaboration = collaborationData;
+        docData.lastModified = Date.now();
 
-      // Save to storage
-      await this.saveCollaborationMetadata(documentId, collaborationData);
-
-      console.log('✅ Long-expiry link created and saved');
-      return linkData;
-
-    } catch (error) {
-      console.error('❌ Failed to generate long-expiry link:', error);
-      return null;
-    }
-  }
-
-  /**
-   * ✅ NEW: Mark one-time link as used
-   */
-  async markOneTimeLinkAsUsed(documentId, linkId, usedBy = 'unknown') {
-    console.log('✅ Marking one-time link as used:', linkId, 'by:', usedBy);
-
-    try {
-      const collaborationData = await this.getCollaborationData(documentId);
-      if (!collaborationData?.links?.oneTime) return false;
-
-      // Find and mark the link as used
-      const linkIndex = collaborationData.links.oneTime.findIndex(
-        link => link.linkId === linkId
-      );
-
-      if (linkIndex !== -1) {
-        collaborationData.links.oneTime[linkIndex].used = true;
-        collaborationData.links.oneTime[linkIndex].usedAt = Date.now();
-        collaborationData.links.oneTime[linkIndex].usedBy = usedBy;
-
-        // Save updated data
-        await this.saveCollaborationMetadata(documentId, collaborationData);
-
-        console.log('✅ One-time link marked as used successfully');
+        browserDocs.set(documentId, docData);
+        this.setBrowserStorage(browserDocs);
+        console.log('✅ Browser storage save successful');
         return true;
       }
 
-      console.warn('⚠️ One-time link not found:', linkId);
       return false;
-
     } catch (error) {
-      console.error('❌ Failed to mark one-time link as used:', error);
+      console.error('❌ Failed to save collaboration metadata immediately:', error);
       return false;
     }
-  }
-
-  /**
-   * ✅ NEW: Get enhanced collaboration data with links
-   */
-  async getEnhancedCollaborationData(documentId) {
-    const collaborationData = await this.getCollaborationData(documentId);
-
-    if (!collaborationData) {
-      return {
-        enabled: false,
-        mode: 'solo',
-        sessionPersistent: false,
-        links: { permanent: [], oneTime: [] },
-        participants: [],
-        revoked: []
-      };
-    }
-
-    // Ensure all required fields exist
-    if (!collaborationData.links) {
-      collaborationData.links = { permanent: [], oneTime: [] };
-    }
-    if (!collaborationData.participants) {
-      collaborationData.participants = [];
-    }
-    if (!collaborationData.revoked) {
-      collaborationData.revoked = [];
-    }
-
-    return collaborationData;
   }
 
   /**
    * ✅ SIMPLIFIED: Enable collaboration with session persistence
    */
-  // ✅ ENHANCED: Make sure enableCollaboration always generates a link
   async enableCollaboration(documentId, documentTitle = 'Untitled') {
     if (!this._initialized) this.initialize();
 
@@ -298,39 +214,25 @@ export class CollaborationService {
       let collaborationData = await this.getCollaborationData(documentId);
 
       if (!collaborationData || !collaborationData.link?.token) {
-        // ✅ ALWAYS: Generate new collaboration link if no valid token exists
+        // ✅ Generate new collaboration link if no valid token exists
         console.log('🔗 Generating new collaboration link...');
-        const linkData = await this.generateCollaborationLink(documentId);
-
-        collaborationData = {
-          enabled: true,
-          mode: 'collaborative',
-          roomId: linkData.roomId,
-          fieldName: linkData.fieldName,
-          owner: await this.getDeviceId(),
-          createdAt: linkData.createdAt,
-          link: linkData,
-          lastActivity: Date.now(),
-          sessionPersistent: true
-        };
-
-        await this.saveCollaborationMetadata(documentId, collaborationData, documentTitle);
-        console.log('✅ New collaboration enabled successfully');
+        return await this.generateCollaborationLink(documentId);
       } else {
-        console.log('📄 Collaboration already exists for document:', documentId);
+        console.log('📄 Collaboration already exists, ensuring session persistence');
         // ✅ ENSURE: Session persistence is enabled
-        collaborationData.enabled = true;
-        collaborationData.sessionPersistent = true;
-        collaborationData.lastActivity = Date.now();
-        await this.saveCollaborationMetadata(documentId, collaborationData, documentTitle);
+        const success = await this.saveCollaborationMetadataImmediate(documentId, {
+          ...collaborationData,
+          enabled: true,
+          sessionPersistent: true,
+          lastActivity: new Date().toISOString()
+        });
+
+        if (success) {
+          return collaborationData;
+        }
       }
 
-      // ✅ VERIFY: Always return collaboration data with valid link
-      if (!collaborationData.link?.token) {
-        throw new Error('Collaboration data missing valid token');
-      }
-
-      return collaborationData;
+      return null;
     } catch (error) {
       console.error('❌ Failed to enable collaboration:', error);
       return null;
@@ -360,9 +262,16 @@ export class CollaborationService {
     return null;
   }
 
-  // Keep all other existing methods...
+  /**
+   * ✅ LEGACY: Keep original save method for backward compatibility
+   */
+  async saveCollaborationMetadata(documentId, collaborationData, documentTitle = 'Untitled') {
+    // Delegate to immediate save method
+    return await this.saveCollaborationMetadataImmediate(documentId, collaborationData);
+  }
+
+  // ✅ Keep all other existing methods unchanged...
   getBrowserStorage() {
-    // ✅ CRITICAL FIX: Server-side safety
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
       console.log('🖥️ Server-side execution - returning empty storage');
       return new Map();
@@ -378,7 +287,6 @@ export class CollaborationService {
   }
 
   setBrowserStorage(docs) {
-    // ✅ CRITICAL FIX: Server-side safety
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
       console.log('🖥️ Server-side execution - skipping storage');
       return;
@@ -391,40 +299,6 @@ export class CollaborationService {
     }
   }
 
-  async saveCollaborationMetadata(documentId, collaborationData, documentTitle = 'Untitled') {
-    try {
-      if (this.isElectron && window.electronAPI?.documents) {
-        console.log('💾 Saving to Electron storage');
-        const currentDoc = await window.electronAPI.documents.load(documentId);
-        if (currentDoc) {
-          const updatedMetadata = {
-            ...currentDoc.metadata,
-            collaboration: collaborationData,
-            lastModified: Date.now()
-          };
-          await window.electronAPI.documents.save(documentId, currentDoc.state, updatedMetadata);
-        }
-      } else {
-        console.log('💾 Saving to browser storage');
-        const browserDocs = this.getBrowserStorage();
-        const docData = browserDocs.get(documentId) || {
-          title: documentTitle,
-          created: Date.now()
-        };
-
-        docData.collaboration = collaborationData;
-        docData.lastModified = Date.now();
-
-        browserDocs.set(documentId, docData);
-        this.setBrowserStorage(browserDocs);
-      }
-
-      console.log('💾 Collaboration metadata saved successfully');
-    } catch (error) {
-      console.error('❌ Failed to save collaboration metadata:', error);
-    }
-  }
-
   async getDeviceId() {
     if (this.isElectron && window.electronAPI?.getDeviceId) {
       try {
@@ -434,7 +308,6 @@ export class CollaborationService {
       }
     }
 
-    // ✅ CRITICAL FIX: Check if we're in browser environment
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
       console.log('🖥️ Running on server - generating temporary device ID');
       return `server_device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -455,19 +328,133 @@ export class CollaborationService {
       if (this.isElectron && window.electronAPI?.documents) {
         const doc = await window.electronAPI.documents.load(documentId);
         const collaboration = doc?.metadata?.collaboration || null;
-        console.log('📋 Retrieved collaboration data (Electron):', collaboration);
+        console.log('📋 Retrieved collaboration data (Electron):', {
+          documentId: documentId.slice(0, 8) + '...',
+          hasCollaboration: !!collaboration,
+          mode: collaboration?.mode,
+          enabled: collaboration?.enabled,
+          sessionPersistent: collaboration?.sessionPersistent
+        });
         return collaboration;
       } else {
         const browserDocs = this.getBrowserStorage();
         const docData = browserDocs.get(documentId);
         const collaboration = docData?.collaboration || null;
-        console.log('📋 Retrieved collaboration data (Browser):', collaboration);
+        console.log('📋 Retrieved collaboration data (Browser):', {
+          documentId: documentId.slice(0, 8) + '...',
+          hasCollaboration: !!collaboration,
+          mode: collaboration?.mode,
+          enabled: collaboration?.enabled,
+          sessionPersistent: collaboration?.sessionPersistent
+        });
         return collaboration;
       }
     } catch (error) {
       console.error('Failed to get collaboration data:', error);
       return null;
     }
+  }
+
+  // ✅ Keep all other methods like generateOneTimeInvitation, generateLongExpiryLink, etc.
+  async generateOneTimeInvitation(documentId, recipientName = null) {
+    if (!this._initialized) this.initialize();
+
+    console.log('🎫 Generating one-time invitation for:', documentId, 'recipient:', recipientName);
+
+    try {
+      const linkData = await this.linkGenerator.generateOneTimeLink(documentId, recipientName);
+      let collaborationData = await this.getCollaborationData(documentId);
+
+      if (!collaborationData) {
+        collaborationData = await this.enableCollaboration(documentId);
+      }
+
+      if (!collaborationData.links) {
+        collaborationData.links = { permanent: [], oneTime: [] };
+      }
+
+      collaborationData.links.oneTime.push(linkData);
+      collaborationData.lastActivity = new Date().toISOString();
+
+      await this.saveCollaborationMetadataImmediate(documentId, collaborationData);
+
+      console.log('✅ One-time invitation created and saved');
+      return linkData;
+
+    } catch (error) {
+      console.error('❌ Failed to generate one-time invitation:', error);
+      return null;
+    }
+  }
+
+  async generateLongExpiryLink(documentId, permissions = ['read', 'write']) {
+    if (!this._initialized) this.initialize();
+
+    console.log('🔗 Generating long-expiry link for:', documentId, 'permissions:', permissions);
+
+    try {
+      const linkData = await this.linkGenerator.generateLongExpiryLink(documentId, permissions);
+      let collaborationData = await this.getCollaborationData(documentId);
+
+      if (!collaborationData) {
+        collaborationData = await this.enableCollaboration(documentId);
+      }
+
+      if (!collaborationData.links) {
+        collaborationData.links = { permanent: [], oneTime: [] };
+      }
+
+      collaborationData.links.permanent.push(linkData);
+      collaborationData.lastActivity = new Date().toISOString();
+
+      await this.saveCollaborationMetadataImmediate(documentId, collaborationData);
+
+      console.log('✅ Long-expiry link created and saved');
+      return linkData;
+
+    } catch (error) {
+      console.error('❌ Failed to generate long-expiry link:', error);
+      return null;
+    }
+  }
+
+  async getEnhancedCollaborationData(documentId) {
+    const collaborationData = await this.getCollaborationData(documentId);
+
+    if (!collaborationData) {
+      return {
+        enabled: false,
+        mode: 'solo',
+        sessionPersistent: false,
+        links: { permanent: [], oneTime: [] },
+        participants: [],
+        revoked: []
+      };
+    }
+
+    // Ensure all required fields exist
+    if (!collaborationData.links) {
+      collaborationData.links = { permanent: [], oneTime: [] };
+    }
+    if (!collaborationData.participants) {
+      collaborationData.participants = [];
+    }
+    if (!collaborationData.revoked) {
+      collaborationData.revoked = [];
+    }
+
+    return collaborationData;
+  }
+
+  // ✅ Legacy compatibility methods
+  async generatePermanentLink(documentId, roomId = null, permissions = ['read', 'write']) {
+    console.log('🔗 generatePermanentLink called - delegating to generateCollaborationLink');
+    return await this.generateCollaborationLink(documentId, permissions);
+  }
+
+  async generateInvitationLink(documentId, roomId = null, permissions = ['read', 'write'], recipientName = null) {
+    console.log('🔗 generateInvitationLink called - delegating to generateCollaborationLink');
+    return await this.generateCollaborationLink(documentId, permissions);
   }
 }
 

@@ -1,4 +1,3 @@
-// app/editor/[documentId]/hooks/useStableDocumentData.js
 "use client";
 import { useRef, useEffect, useState } from 'react';
 
@@ -13,8 +12,9 @@ export function useStableDocumentData(documentId) {
     const [isElectron, setIsElectron] = useState(false);
     const loadedRef = useRef(false);
     const documentIdRef = useRef(documentId);
+    const cacheCheckCountRef = useRef(0); // ✅ NEW: Track cache checks
 
-    // ✅ IMMEDIATE ELECTRON CHECK: Check immediately, don't wait for useEffect
+    // ✅ IMMEDIATE ELECTRON CHECK
     useEffect(() => {
         const electronAvailable = typeof window !== 'undefined' &&
             !!window.electronAPI &&
@@ -36,6 +36,7 @@ export function useStableDocumentData(documentId) {
         loadedRef.current = false;
         setIsLoading(true);
         setDocumentData(null);
+        cacheCheckCountRef.current = 0; // ✅ RESET: Cache check counter
     }
 
     useEffect(() => {
@@ -44,9 +45,8 @@ export function useStableDocumentData(documentId) {
 
         if (!documentId || loadedRef.current) return;
 
-        // ✅ WAIT FOR ELECTRON CHECK: Don't proceed until we know if Electron is available
+        // ✅ WAIT FOR ELECTRON CHECK
         if (isElectron === false && typeof window.electronAPI !== 'undefined') {
-            // Still checking, wait a bit more
             setTimeout(() => {
                 const stillChecking = typeof window.electronAPI !== 'undefined' && !window.electronAPI?.isElectron;
                 if (!stillChecking) {
@@ -56,9 +56,8 @@ export function useStableDocumentData(documentId) {
             return;
         }
 
-        // ✅ ELECTRON CHECK: Only proceed if Electron is available OR we're certain it's not
+        // ✅ ELECTRON CHECK: Only proceed if Electron is available
         if (!isElectron && typeof window !== 'undefined') {
-            // Double-check for Electron API
             const hasElectronAPI = !!window.electronAPI?.documents?.load;
 
             if (!hasElectronAPI) {
@@ -77,26 +76,38 @@ export function useStableDocumentData(documentId) {
                 loadedRef.current = true;
                 return;
             } else {
-                // Found Electron API, update state
                 setIsElectron(true);
             }
         }
 
-        // ✅ PREVENT LOOPS: Check if already cached
-        if (globalDocumentCache.has(documentId)) {
+        // ✅ CACHE CHECK: Only use cache for first few requests, then force refresh
+        cacheCheckCountRef.current += 1;
+        const allowCache = cacheCheckCountRef.current <= 2; // Allow cache for first 2 checks only
+
+        if (allowCache && globalDocumentCache.has(documentId)) {
             const cachedData = globalDocumentCache.get(documentId);
-            console.log('📋 Using cached document data:', documentId.slice(0, 8) + '...');
-            setDocumentData(cachedData);
-            setIsLoading(false);
-            loadedRef.current = true;
-            return;
+            const cacheAge = Date.now() - cachedData.loadedAt;
+            
+            // ✅ CACHE EXPIRY: Only use cache if it's less than 5 seconds old
+            if (cacheAge < 5000) {
+                console.log('📋 Using fresh cached document data:', documentId.slice(0, 8) + '...', `(${Math.round(cacheAge/1000)}s old)`);
+                setDocumentData(cachedData);
+                setIsLoading(false);
+                loadedRef.current = true;
+                return;
+            } else {
+                console.log('🗑️ Cache expired, removing old data:', documentId.slice(0, 8) + '...', `(${Math.round(cacheAge/1000)}s old)`);
+                globalDocumentCache.delete(documentId);
+            }
+        } else if (!allowCache) {
+            console.log('🔄 Forcing fresh load (cache limit reached):', documentId.slice(0, 8) + '...');
+            globalDocumentCache.delete(documentId); // Force fresh load
         }
 
-        // ✅ PREVENT CONCURRENT LOADS: Check if already loading
+        // ✅ PREVENT CONCURRENT LOADS
         if (documentLoadingFlags.has(documentId)) {
             console.log('⚠️ Document already loading, waiting...', documentId.slice(0, 8) + '...');
 
-            // Wait for the existing load
             if (documentLoadPromises.has(documentId)) {
                 documentLoadPromises.get(documentId).then(data => {
                     setDocumentData(data);
@@ -113,12 +124,11 @@ export function useStableDocumentData(documentId) {
         // ✅ MARK: Document as loading
         documentLoadingFlags.add(documentId);
 
-        // ✅ SINGLE LOAD: Load document once and cache
+        // ✅ FRESH LOAD: Always load fresh data for collaboration consistency
         const loadPromise = (async () => {
             try {
-                console.log('🔄 STABLE DOCUMENT LOAD:', documentId.slice(0, 8) + '...');
+                console.log('🔄 FRESH DOCUMENT LOAD:', documentId.slice(0, 8) + '...', `(attempt #${cacheCheckCountRef.current})`);
 
-                // ✅ SAFETY: Double check Electron API availability
                 if (!window.electronAPI?.documents?.load) {
                     throw new Error('Electron API not available');
                 }
@@ -134,16 +144,17 @@ export function useStableDocumentData(documentId) {
                     loadedAt: Date.now()
                 };
 
-                console.log('✅ Document data loaded:', {
+                console.log('✅ Fresh document data loaded:', {
                     id: documentId.slice(0, 8) + '...',
                     title: data.title,
                     hasCollaboration: !!data.collaboration,
                     hasState: !!data.state,
                     collaborationEnabled: data.collaboration?.enabled,
-                    sessionPersistent: data.collaboration?.sessionPersistent
+                    sessionPersistent: data.collaboration?.sessionPersistent,
+                    collaborationMode: data.collaboration?.mode
                 });
 
-                // ✅ CACHE: Store for future use
+                // ✅ CACHE: Store fresh data
                 globalDocumentCache.set(documentId, data);
                 return data;
             } catch (error) {
@@ -162,7 +173,6 @@ export function useStableDocumentData(documentId) {
                 globalDocumentCache.set(documentId, fallbackData);
                 return fallbackData;
             } finally {
-                // ✅ CLEANUP: Remove loading flags
                 documentLoadingFlags.delete(documentId);
                 documentLoadPromises.delete(documentId);
             }
@@ -189,7 +199,7 @@ export function useStableDocumentData(documentId) {
     };
 }
 
-// ✅ UTILITY: Clear cache when needed (Client-side only)
+// ✅ ENHANCED: Clear cache and force refresh
 export function clearDocumentCache(documentId) {
     if (typeof window === 'undefined') return;
 
@@ -197,7 +207,13 @@ export function clearDocumentCache(documentId) {
         globalDocumentCache.delete(documentId);
         documentLoadPromises.delete(documentId);
         documentLoadingFlags.delete(documentId);
-        console.log('🗑️ Cleared document cache for:', documentId.slice(0, 8) + '...');
+        
+        // ✅ TRIGGER: Force component to reload fresh data
+        window.dispatchEvent(new CustomEvent('documentCacheCleared', { 
+            detail: { documentId } 
+        }));
+        
+        console.log('🗑️ Cleared document cache and triggered refresh for:', documentId.slice(0, 8) + '...');
     } else {
         globalDocumentCache.clear();
         documentLoadPromises.clear();

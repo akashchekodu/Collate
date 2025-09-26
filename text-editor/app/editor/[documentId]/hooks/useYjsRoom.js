@@ -138,81 +138,83 @@ export function useYjsRoom(documentId, options = {}) {
   }, [documentId]);
 
   // ✅ UPDATED: Enable collaboration with session persistence
-  const enableCollaboration = useCallback(async (token) => {
-    if (isSwitching) {
-      console.log('⚠️ Already switching, ignoring enable collaboration call');
-      return;
-    }
+// ✅ UPDATED: Enable collaboration with immediate metadata update
+// ✅ UPDATED: Enable collaboration with immediate metadata update
+const enableCollaboration = useCallback(async (token) => {
+  if (isSwitching) {
+    console.log('⚠️ Already switching, ignoring enable collaboration call');
+    return;
+  }
 
-    console.log('🔄 useYjsRoom: Enabling collaboration mode with session persistence');
-    setIsSwitching(true);
+  console.log('🔄 useYjsRoom: Enabling collaboration mode');
+  setIsSwitching(true);
 
+  try {
+    // ✅ SIMPLIFIED: Just update UI state - metadata is already saved by ShareControls
+    setCollaborationToken(token);
+    setIsCollaborationMode(true);
+
+    console.log('✅ useYjsRoom: UI state updated', {
+      hasToken: !!token,
+      isCollaborationMode: true
+    });
+
+    // ✅ Update URL  
+    const newUrl = `/editor/${documentId}?token=${token}`;
+    window.history.pushState({}, '', newUrl);
+
+    console.log('✅ useYjsRoom: URL updated');
+
+    // ✅ OPTIONAL: Update service state (non-critical)
     try {
-      // ✅ STEP 1: Ensure service has session persistence saved
-      try {
-        const { collaborationService } = await import('../../../services/collabService');
-        await collaborationService.enableCollaboration(documentId);
-        console.log('✅ Service session persistence confirmed');
-      } catch (serviceError) {
-        console.error('❌ Service enableCollaboration failed:', serviceError);
-        // Continue anyway - UI state is more important
-      }
-
-      // ✅ STEP 2: Set UI state
-      setCollaborationToken(token);
-      setIsCollaborationMode(true);
-
-      console.log('✅ useYjsRoom: UI state updated', {
-        hasToken: !!token,
-        isCollaborationMode: true
-      });
-
-      // ✅ STEP 3: Update URL  
-      const newUrl = `/editor/${documentId}?token=${token}`;
-      window.history.pushState({}, '', newUrl);
-
-      console.log('✅ useYjsRoom: URL updated to', newUrl);
-
-      console.log('✅ useYjsRoom: Collaboration mode enabled successfully');
-    } catch (error) {
-      console.error('❌ useYjsRoom: Failed to enable collaboration:', error);
-      throw error; // Re-throw so EditorHeader can show the error
-    } finally {
-      setIsSwitching(false); // ✅ Always clear switching state
+      const { collaborationService } = await import('../../../services/collabService');
+      await collaborationService.enableCollaboration(documentId);
+      console.log('✅ Service state updated');
+    } catch (serviceError) {
+      console.warn('⚠️ Service update failed (non-critical):', serviceError);
     }
-  }, [documentId, isSwitching]);
 
-  // ✅ UPDATED: Disable collaboration and clear session persistence
-  const disableCollaboration = useCallback(async () => {
-    if (isSwitching) return;
+    console.log('✅ useYjsRoom: Collaboration mode enabled successfully');
+  } catch (error) {
+    console.error('❌ useYjsRoom: Failed to enable collaboration:', error);
+    throw error;
+  } finally {
+    setIsSwitching(false);
+  }
+}, [documentId, isSwitching]);
 
-    console.log('🔄 Disabling collaboration mode and clearing session persistence');
-    setIsSwitching(true);
+// ✅ FIXED: Disable collaboration (remove broken service dependency)
+const disableCollaboration = useCallback(async () => {
+  if (isSwitching) return;
 
+  console.log('🔄 Disabling collaboration mode');
+  setIsSwitching(true);
+
+  try {
+    // ✅ SIMPLIFIED: Just update UI state - metadata is handled by ShareControls
+    setIsCollaborationMode(false);
+    setCollaborationToken(null);
+
+    // Remove token from URL
+    const newUrl = `/editor/${documentId}`;
+    window.history.pushState({}, '', newUrl);
+
+    // ✅ OPTIONAL: Update service state (non-critical)
     try {
-      // ✅ CLEAR: Session persistence in storage
-      try {
-        const { collaborationService } = await import('../../../services/collabService');
-        await collaborationService.disableCollaboration(documentId);
-        console.log('✅ Session persistence cleared from storage');
-      } catch (error) {
-        console.error('❌ Failed to clear session persistence:', error);
-      }
-
-      setIsCollaborationMode(false);
-      setCollaborationToken(null);
-
-      // Remove token from URL
-      const newUrl = `/editor/${documentId}`;
-      window.history.pushState({}, '', newUrl);
-
-      console.log('✅ Solo mode enabled successfully');
+      const { collaborationService } = await import('../../../services/collabService');
+      await collaborationService.disableCollaboration(documentId);
+      console.log('✅ Service state cleared');
     } catch (error) {
-      console.error('❌ Failed to disable collaboration:', error);
-    } finally {
-      setIsSwitching(false);
+      console.warn('⚠️ Service clear failed (non-critical):', error);
     }
-  }, [documentId, isSwitching]);
+
+    console.log('✅ Solo mode enabled');
+  } catch (error) {
+    console.error('❌ Failed to disable collaboration:', error);
+  } finally {
+    setIsSwitching(false);
+  }
+}, [documentId, isSwitching]);
 
   // ✅ STABLE ROOM DATA: Only create after initialization
   const roomData = useMemo(() => {

@@ -277,6 +277,59 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ✅ NEW: Update collaboration metadata immediately (without full document save)
+ipcMain.handle('documents:updateCollaborationMetadata', async (event, documentId, collaborationData) => {
+  try {
+    console.log('🔄 IPC: Updating collaboration metadata only:', {
+      documentId: documentId.slice(0, 8) + '...',
+      enabled: collaborationData.enabled,
+      mode: collaborationData.mode,
+      sessionPersistent: collaborationData.sessionPersistent
+    });
+
+    // ✅ METADATA ONLY: Load document, update collaboration, save back
+    const docPath = path.join(documentStorage.documentsPath, `${documentId}.json`);
+    
+    let documentData;
+    try {
+      const data = await fs.readFile(docPath, 'utf-8');
+      documentData = JSON.parse(data);
+    } catch (error) {
+      console.error('❌ Failed to load document for metadata update:', error);
+      return false;
+    }
+
+    // ✅ UPDATE: Only the collaboration metadata (preserve existing fields)
+    documentData.collaboration = {
+      ...documentData.collaboration, // Keep existing collaboration data
+      ...collaborationData, // Override with new data
+      lastActivity: new Date().toISOString(),
+      schemaVersion: 2
+    };
+
+    documentData.updatedAt = new Date().toISOString();
+    documentData.version = (documentData.version || 0) + 1;
+
+    // ✅ SAVE: Write back with updated metadata only
+    await fs.writeFile(docPath, JSON.stringify(documentData, null, 2));
+
+    // ✅ UPDATE: Index
+    await documentStorage.updateIndex(documentId, documentData);
+
+    console.log('✅ Collaboration metadata updated immediately:', {
+      documentId: documentId.slice(0, 8) + '...',
+      mode: collaborationData.mode,
+      enabled: collaborationData.enabled,
+      sessionPersistent: collaborationData.sessionPersistent
+    });
+    return true;
+  } catch (error) {
+    console.error('❌ Error updating collaboration metadata:', error);
+    return false;
+  }
+});
+
+
   ipcMain.handle('documents:getAll', async () => {
     try {
       const documents = await documentStorage.getAllDocuments();

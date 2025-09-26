@@ -4,6 +4,8 @@ import { useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Share2, MoreVertical, Copy, Download } from "lucide-react"
+// ✅ ADD: Import at the top of ShareControls.js
+import { clearDocumentCache } from "./hooks/useStableDocumentData"
 
 export default function ShareControls({
   documentId,
@@ -224,15 +226,14 @@ export default function ShareControls({
     }
   }, [documentId, isElectron])
 
-  // ✅ FIXED: Enable collaboration with immediate metadata saving
-  // ✅ FIXED: Single coordinated save
+  // ✅ UPDATE: handleEnableCollaboration with cache clearing
   const handleEnableCollaboration = useCallback(async () => {
     if (isSwitching || !enableCollaboration) return;
 
     try {
       console.log('🔄 Starting collaboration from ShareControls');
 
-      // ✅ STEP 1: Generate collaboration link (don't save yet)
+      // ✅ STEP 1: Generate collaboration link
       const { collaborationService } = await import("../../services/collabService");
       const linkData = await collaborationService.generateCollaborationLink(documentId);
 
@@ -240,10 +241,65 @@ export default function ShareControls({
         throw new Error('Failed to generate collaboration link');
       }
 
-      // ✅ STEP 2: Enable in UI state (this will trigger the coordinated save)
+      console.log('✅ Generated collaboration link:', linkData.url);
+
+      // ✅ STEP 2: Save metadata immediately using the NEW IPC method
+      try {
+        if (window.electronAPI?.documents?.updateCollaborationMetadata) {
+          const collaborationData = {
+            enabled: true,
+            mode: 'collaborative',
+            sessionPersistent: true,
+            roomId: `collab-${documentId}`,
+            fieldName: `editor-${documentId}`,
+            createdAt: new Date().toISOString(),
+            lastActivity: new Date().toISOString(),
+            link: {
+              token: linkData.token,
+              url: linkData.url,
+              createdAt: new Date().toISOString()
+            },
+            links: { permanent: [], oneTime: [] },
+            participants: [],
+            revoked: [],
+            schemaVersion: 2
+          };
+
+          const metadataSuccess = await window.electronAPI.documents.updateCollaborationMetadata(
+            documentId, 
+            collaborationData
+          );
+
+          if (metadataSuccess) {
+            console.log('✅ Collaboration metadata saved immediately via IPC');
+            
+            // ✅ CRITICAL: Clear cache so fresh data gets loaded
+            clearDocumentCache(documentId);
+            console.log('🗑️ Document cache cleared - will reload fresh metadata');
+          } else {
+            console.warn('⚠️ Immediate metadata save failed, using fallback');
+            await saveCollaborationMetadataImmediately(collaborationData);
+            clearDocumentCache(documentId);
+          }
+        } else {
+          console.log('🔄 Using fallback metadata save method');
+          await saveCollaborationMetadataImmediately({
+            enabled: true,
+            mode: 'collaborative',
+            sessionPersistent: true,
+            link: { token: linkData.token, url: linkData.url }
+          });
+          clearDocumentCache(documentId);
+        }
+      } catch (metadataError) {
+        console.error('❌ Metadata save failed:', metadataError);
+        console.warn('⚠️ Collaboration mode may not persist across reloads');
+      }
+
+      // ✅ STEP 3: Enable in UI state
       await enableCollaboration(linkData.token);
 
-      // ✅ STEP 3: Show success (no duplicate save needed)
+      // ✅ STEP 4: Show success
       const copySuccess = await copyToClipboardSafely(linkData.url, "Collaboration link");
       const message = copySuccess
         ? `✅ Collaboration enabled!\n\nLink copied to clipboard:\n${linkData.url}`
@@ -256,27 +312,67 @@ export default function ShareControls({
       console.error('❌ Collaboration enabling failed:', error);
       alert(`❌ Error enabling collaboration: ${error.message}`);
     }
-  }, [documentId, enableCollaboration, isSwitching, copyToClipboardSafely]);
+  }, [documentId, enableCollaboration, isSwitching, copyToClipboardSafely, saveCollaborationMetadataImmediately]);
 
+  // ✅ UPDATE: handleDisableCollaboration with cache clearing
   const handleDisableCollaboration = useCallback(async () => {
-    if (isSwitching || !disableCollaboration) return
+    if (isSwitching || !disableCollaboration) return;
 
     try {
-      // ✅ SAVE METADATA: Update to solo mode immediately
-      await saveCollaborationMetadataImmediately({
-        enabled: false,
-        mode: 'solo',
-        sessionPersistent: false,
-        lastActivity: new Date().toISOString()
-      });
+      console.log('🔄 Disabling collaboration from ShareControls');
 
-      await disableCollaboration()
-      alert('📝 Switched to solo mode.\n\nYour document is now private.')
+      // ✅ STEP 1: Save metadata immediately using NEW IPC method
+      try {
+        if (window.electronAPI?.documents?.updateCollaborationMetadata) {
+          const collaborationData = {
+            enabled: false,
+            mode: 'solo',
+            sessionPersistent: false,
+            lastActivity: new Date().toISOString(),
+            link: null, // Clear the collaboration link
+            schemaVersion: 2
+          };
+
+          const metadataSuccess = await window.electronAPI.documents.updateCollaborationMetadata(
+            documentId, 
+            collaborationData
+          );
+
+          if (metadataSuccess) {
+            console.log('✅ Solo mode metadata saved immediately via IPC');
+            
+            // ✅ CRITICAL: Clear cache so fresh data gets loaded
+            clearDocumentCache(documentId);
+            console.log('🗑️ Document cache cleared - will reload fresh metadata');
+          } else {
+            console.warn('⚠️ Immediate metadata save failed, using fallback');
+            await saveCollaborationMetadataImmediately(collaborationData);
+            clearDocumentCache(documentId);
+          }
+        } else {
+          console.log('🔄 Using fallback metadata save method');
+          await saveCollaborationMetadataImmediately({
+            enabled: false,
+            mode: 'solo',
+            sessionPersistent: false
+          });
+          clearDocumentCache(documentId);
+        }
+      } catch (metadataError) {
+        console.warn('⚠️ Metadata save failed (non-critical for disable):', metadataError);
+      }
+
+      // ✅ STEP 2: Disable in UI state
+      await disableCollaboration();
+
+      alert('📝 Switched to solo mode.\n\nYour document is now private.');
+      console.log('✅ Collaboration disabling completed');
+
     } catch (error) {
-      console.error('❌ Disable collaboration error:', error)
-      alert(`❌ Error switching to solo mode: ${error.message}`)
+      console.error('❌ Disable collaboration error:', error);
+      alert(`❌ Error switching to solo mode: ${error.message}`);
     }
-  }, [disableCollaboration, isSwitching, saveCollaborationMetadataImmediately])
+  }, [documentId, disableCollaboration, isSwitching, saveCollaborationMetadataImmediately]);
 
   return (
     <div className="flex items-center gap-2">
