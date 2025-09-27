@@ -305,7 +305,7 @@ export default function ShareControls({
         ? `✅ Collaboration enabled!\n\nLink copied to clipboard:\n${linkData.url}`
         : `✅ Collaboration enabled!\n\nShare this link:\n${linkData.url}`;
 
-      alert(message);
+              // alert(message); ALLERT IS CAUSING THE EDITOR TO NET GET CURSOR!!!
       console.log('✅ Collaboration enabling completed');
 
     } catch (error) {
@@ -365,7 +365,7 @@ export default function ShareControls({
       // ✅ STEP 2: Disable in UI state
       await disableCollaboration();
 
-      alert('📝 Switched to solo mode.\n\nYour document is now private.');
+      // alert('📝 Switched to solo mode.\n\nYour document is now private.');
       console.log('✅ Collaboration disabling completed');
 
     } catch (error) {
