@@ -125,13 +125,13 @@ export default function ShareControls({
         const message = copySuccess
           ? `🔗 Permanent Link Created!\n\nLink copied to clipboard!\n\nURL: ${link.url}\n\nExpires: ${new Date(link.expiresAt).toLocaleDateString()}`
           : `🔗 Permanent Link Created!\n\nURL: ${link.url}\n\nExpires: ${new Date(link.expiresAt).toLocaleDateString()}`
-        alert(message)
+        // alert(message)
       } else {
-        alert('❌ Failed to generate permanent link. Please try again.')
+        // alert('❌ Failed to generate permanent link. Please try again.')
       }
     } catch (error) {
       console.error('❌ Failed to generate permanent link:', error)
-      alert(`❌ Error generating permanent link: ${error.message}`)
+      // alert(`❌ Error generating permanent link: ${error.message}`)
     }
   }, [documentId, isElectron, copyToClipboardSafely, saveCollaborationMetadataImmediately])
 
@@ -158,13 +158,13 @@ export default function ShareControls({
         const message = copySuccess
           ? `🎫 One-Time Invitation Created!\n\nLink copied to clipboard!\n\nURL: ${invitation.url}\n\n⚠️ This link can only be used ONCE.`
           : `🎫 One-Time Invitation Created!\n\nURL: ${invitation.url}\n\n⚠️ This link can only be used ONCE.`
-        alert(message)
+        // alert(message)
       } else {
-        alert('❌ Failed to generate one-time invitation. Please try again.')
+        // alert('❌ Failed to generate one-time invitation. Please try again.')
       }
     } catch (error) {
       console.error('❌ Failed to generate one-time invitation:', error)
-      alert(`❌ Error generating one-time invitation: ${error.message}`)
+      // alert(`❌ Error generating one-time invitation: ${error.message}`)
     }
   }, [documentId, isElectron, copyToClipboardSafely, saveCollaborationMetadataImmediately])
 
@@ -179,21 +179,21 @@ export default function ShareControls({
       const oneTimeCount = data.links?.oneTime?.length || 0
       const usedOneTime = data.links?.oneTime?.filter(link => link.used).length || 0
 
-      alert(
-        `📊 Collaboration Status\n\n` +
-        `Document: ${title}\n` +
-        `Mode: ${data.mode || 'solo'}\n` +
-        `Session Persistent: ${data.sessionPersistent ? 'Yes' : 'No'}\n\n` +
-        `📎 Links Created:\n` +
-        `• Permanent Links: ${permanentCount}\n` +
-        `• One-time Invitations: ${oneTimeCount}\n` +
-        `• Used Invitations: ${usedOneTime}\n\n` +
-        `🔒 Security:\n` +
-        `• Revoked Links: ${data.revoked?.length || 0}`
-      )
+      // alert(
+      //   `📊 Collaboration Status\n\n` +
+      //   `Document: ${title}\n` +
+      //   `Mode: ${data.mode || 'solo'}\n` +
+      //   `Session Persistent: ${data.sessionPersistent ? 'Yes' : 'No'}\n\n` +
+      //   `📎 Links Created:\n` +
+      //   `• Permanent Links: ${permanentCount}\n` +
+      //   `• One-time Invitations: ${oneTimeCount}\n` +
+      //   `• Used Invitations: ${usedOneTime}\n\n` +
+      //   `🔒 Security:\n` +
+      //   `• Revoked Links: ${data.revoked?.length || 0}`
+      // )
     } catch (error) {
       console.error('❌ Failed to get collaboration info:', error)
-      alert("❌ Failed to get collaboration information")
+      // alert("❌ Failed to get collaboration information")
     }
   }, [documentId, isElectron, title])
 
@@ -209,20 +209,20 @@ export default function ShareControls({
       const collabData = await collaborationService.getCollaborationData(documentId)
       console.log('🤝 CollaborationService data:', collabData)
 
-      alert(
-        `🔍 DEBUG INFO\n\n` +
-        `Document ID: ${documentId.slice(0, 8)}...\n` +
-        `Has metadata: ${!!doc?.metadata}\n` +
-        `Has collaboration: ${!!doc?.metadata?.collaboration}\n` +
-        `Mode: ${doc?.metadata?.collaboration?.mode || 'none'}\n` +
-        `Enabled: ${doc?.metadata?.collaboration?.enabled || false}\n` +
-        `Session Persistent: ${doc?.metadata?.collaboration?.sessionPersistent || false}\n` +
-        `Link exists: ${!!doc?.metadata?.collaboration?.link}\n` +
-        `Token exists: ${!!doc?.metadata?.collaboration?.link?.token}`
-      )
+      // alert(
+      //   `🔍 DEBUG INFO\n\n` +
+      //   `Document ID: ${documentId.slice(0, 8)}...\n` +
+      //   `Has metadata: ${!!doc?.metadata}\n` +
+      //   `Has collaboration: ${!!doc?.metadata?.collaboration}\n` +
+      //   `Mode: ${doc?.metadata?.collaboration?.mode || 'none'}\n` +
+      //   `Enabled: ${doc?.metadata?.collaboration?.enabled || false}\n` +
+      //   `Session Persistent: ${doc?.metadata?.collaboration?.sessionPersistent || false}\n` +
+      //   `Link exists: ${!!doc?.metadata?.collaboration?.link}\n` +
+      //   `Token exists: ${!!doc?.metadata?.collaboration?.link?.token}`
+      // )
     } catch (error) {
       console.error('❌ Debug failed:', error)
-      alert("❌ Debug failed: " + error.message)
+      // alert("❌ Debug failed: " + error.message)
     }
   }, [documentId, isElectron])
 
@@ -310,7 +310,7 @@ export default function ShareControls({
 
     } catch (error) {
       console.error('❌ Collaboration enabling failed:', error);
-      alert(`❌ Error enabling collaboration: ${error.message}`);
+      // alert(`❌ Error enabling collaboration: ${error.message}`);
     }
   }, [documentId, enableCollaboration, isSwitching, copyToClipboardSafely, saveCollaborationMetadataImmediately]);
 
@@ -370,7 +370,7 @@ export default function ShareControls({
 
     } catch (error) {
       console.error('❌ Disable collaboration error:', error);
-      alert(`❌ Error switching to solo mode: ${error.message}`);
+      // alert(`❌ Error switching to solo mode: ${error.message}`);
     }
   }, [documentId, disableCollaboration, isSwitching, saveCollaborationMetadataImmediately]);
 
@@ -390,21 +390,35 @@ export default function ShareControls({
         </Button>
       ) : (
         <div className="flex gap-2">
-          <Button
-            onClick={async () => {
-              try {
-                const url = window.location.href
-                const copySuccess = await copyToClipboardSafely(url, "Current collaboration link")
-                alert(`${copySuccess ? 'Current collaboration link copied!' : 'Please copy the link from the alert above'}\n\n${url}`)
-              } catch (error) {
-                alert('Failed to copy link')
-              }
-            }}
-            className="gap-2 bg-green-500 hover:bg-green-600"
-          >
-            <Copy size={16} />
-            <span className="hidden sm:inline">Copy Current</span>
-          </Button>
+<Button
+  onClick={async () => {
+    try {
+      const url = window.location.href
+      const copySuccess = await copyToClipboardSafely(url, "Current collaboration link")
+      
+      // ✅ RETURN: Instead of alert, return the link info
+      return {
+        success: true,
+        copied: copySuccess,
+        url: url,
+        message: copySuccess ? 'Current collaboration link copied!' : 'Current collaboration link ready'
+      }
+    } catch (error) {
+      console.error('Failed to copy current link:', error)
+      // ✅ RETURN: Error info instead of alert
+      return {
+        success: false,
+        error: error.message,
+        message: 'Failed to copy current link'
+      }
+    }
+  }}
+  className="gap-2 bg-green-500 hover:bg-green-600"
+>
+  <Copy size={16} />
+  <span className="hidden sm:inline">Copy Current</span>
+</Button>
+
 
           <Button
             variant="outline"
