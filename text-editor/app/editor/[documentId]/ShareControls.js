@@ -4,8 +4,8 @@ import { useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Share2, MoreVertical, Copy, Download } from "lucide-react"
-// ✅ ADD: Import at the top of ShareControls.js
 import { clearDocumentCache } from "./hooks/useStableDocumentData"
+import { useModal } from "@/app/components/ui/modal-provider"
 
 export default function ShareControls({
   documentId,
@@ -16,7 +16,9 @@ export default function ShareControls({
   disableCollaboration,
   title = "Untitled Document"
 }) {
-  // ✅ Clipboard helper
+  const modal = useModal()
+
+  // ✅ Clipboard helper with modal feedback
   const copyToClipboardSafely = useCallback(async (text, description = "Link") => {
     try {
       await navigator.clipboard.writeText(text)
@@ -38,13 +40,20 @@ export default function ShareControls({
       } catch (fallbackError) {
         console.warn("❌ Fallback copy failed:", fallbackError)
       }
-      alert(`${description}:\n${text}`)
+      
+      // ✅ Show modal with copyable text if clipboard fails
+      modal.showInfo(
+        'Copy Link',
+        `Please copy this ${description.toLowerCase()} manually:`,
+        {
+          copyableText: text
+        }
+      )
       return false
     }
-  }, [])
+  }, [modal])
 
   // ✅ HELPER: Save collaboration metadata immediately
-  // ✅ FIXED: Ensure sessionPersistent is always included
   const saveCollaborationMetadataImmediately = useCallback(async (collaborationData) => {
     try {
       console.log('💾 Saving collaboration metadata immediately:', collaborationData);
@@ -59,10 +68,9 @@ export default function ShareControls({
         collaboration: {
           ...currentDoc.metadata?.collaboration,
           ...collaborationData,
-          // ✅ CRITICAL: Always ensure these core fields
           enabled: collaborationData.enabled ?? true,
           mode: collaborationData.mode ?? 'collaborative',
-          sessionPersistent: collaborationData.sessionPersistent ?? true, // ✅ FIX: Default to true
+          sessionPersistent: collaborationData.sessionPersistent ?? true,
           lastActivity: new Date().toISOString(),
           schemaVersion: 2
         }
@@ -82,29 +90,35 @@ export default function ShareControls({
     }
   }, [documentId]);
 
-  // ✅ Export
+  // ✅ Export with modal feedback
   const handleExport = async () => {
     if (!documentId || !isElectron) return
     try {
       const result = await window.electronAPI.documents.export(documentId, "md")
       if (result.success) {
         console.log("✅ Document exported to:", result.path)
-        alert(`✅ Document exported successfully!\n\nSaved to: ${result.path}`)
+        modal.showSuccess(
+          'Export Successful',
+          `Document exported successfully!\n\nSaved to: ${result.path}`
+        )
       }
     } catch (error) {
       console.error("❌ Export failed:", error)
-      alert("❌ Export failed. Please try again.")
+      modal.showError('Export Failed', 'Export failed. Please try again.')
     }
   }
 
   // ✅ Copy current page link
-  const handleCopyCurrentPageLink = () => {
+  const handleCopyCurrentPageLink = useCallback(async () => {
     if (typeof window !== 'undefined') {
-      copyToClipboardSafely(window.location.href, "Current page link")
+      const success = await copyToClipboardSafely(window.location.href, "Current page link")
+      if (success) {
+        modal.showSuccess('Link Copied', 'Current page link copied to clipboard!')
+      }
     }
-  }
+  }, [copyToClipboardSafely, modal])
 
-  // ✅ Collaboration actions
+  // ✅ Collaboration actions with modals
   const handleGeneratePermanentLink = useCallback(async () => {
     if (!documentId || !isElectron) return
     try {
@@ -113,7 +127,6 @@ export default function ShareControls({
       const link = await collaborationService.generateLongExpiryLink(documentId, ["read", "write"])
 
       if (link?.url) {
-        // ✅ SAVE METADATA: Update permanent links immediately
         await saveCollaborationMetadataImmediately({
           links: {
             permanent: [link],
@@ -122,18 +135,36 @@ export default function ShareControls({
         });
 
         const copySuccess = await copyToClipboardSafely(link.url, "Permanent link")
-        const message = copySuccess
-          ? `🔗 Permanent Link Created!\n\nLink copied to clipboard!\n\nURL: ${link.url}\n\nExpires: ${new Date(link.expiresAt).toLocaleDateString()}`
-          : `🔗 Permanent Link Created!\n\nURL: ${link.url}\n\nExpires: ${new Date(link.expiresAt).toLocaleDateString()}`
-        // alert(message)
+        
+        modal.showSuccess(
+          'Permanent Link Created!',
+          copySuccess 
+            ? `Link copied to clipboard!\n\nExpires: ${new Date(link.expiresAt).toLocaleDateString()}`
+            : `Link created successfully!\n\nExpires: ${new Date(link.expiresAt).toLocaleDateString()}`,
+          {
+            copyableText: link.url,
+            customButtons: copySuccess ? undefined : [{
+              text: 'Copy Link',
+              variant: 'outline',
+              onClick: () => copyToClipboardSafely(link.url, "Permanent link"),
+              closeOnClick: false
+            }]
+          }
+        )
       } else {
-        // alert('❌ Failed to generate permanent link. Please try again.')
+        modal.showError(
+          'Link Generation Failed',
+          'Failed to generate permanent link. Please try again.'
+        )
       }
     } catch (error) {
       console.error('❌ Failed to generate permanent link:', error)
-      // alert(`❌ Error generating permanent link: ${error.message}`)
+      modal.showError(
+        'Link Generation Error',
+        `Error generating permanent link: ${error.message}`
+      )
     }
-  }, [documentId, isElectron, copyToClipboardSafely, saveCollaborationMetadataImmediately])
+  }, [documentId, isElectron, copyToClipboardSafely, saveCollaborationMetadataImmediately, modal])
 
   const handleGenerateOneTimeInvitation = useCallback(async () => {
     if (!documentId || !isElectron) return
@@ -143,7 +174,6 @@ export default function ShareControls({
       const invitation = await collaborationService.generateOneTimeInvitation(documentId, "ShareControls User")
 
       if (invitation?.url) {
-        // ✅ SAVE METADATA: Update one-time invitations immediately
         const currentDoc = await window.electronAPI.documents.load(documentId);
         const existingOneTime = currentDoc?.metadata?.collaboration?.links?.oneTime || [];
 
@@ -155,18 +185,36 @@ export default function ShareControls({
         });
 
         const copySuccess = await copyToClipboardSafely(invitation.url, "One-time invitation")
-        const message = copySuccess
-          ? `🎫 One-Time Invitation Created!\n\nLink copied to clipboard!\n\nURL: ${invitation.url}\n\n⚠️ This link can only be used ONCE.`
-          : `🎫 One-Time Invitation Created!\n\nURL: ${invitation.url}\n\n⚠️ This link can only be used ONCE.`
-        // alert(message)
+        
+        modal.showWarning(
+          'One-Time Invitation Created!',
+          copySuccess
+            ? 'Link copied to clipboard!\n\n⚠️ This link can only be used ONCE.'
+            : 'Link created successfully!\n\n⚠️ This link can only be used ONCE.',
+          {
+            copyableText: invitation.url,
+            customButtons: copySuccess ? undefined : [{
+              text: 'Copy Link',
+              variant: 'outline',
+              onClick: () => copyToClipboardSafely(invitation.url, "One-time invitation"),
+              closeOnClick: false
+            }]
+          }
+        )
       } else {
-        // alert('❌ Failed to generate one-time invitation. Please try again.')
+        modal.showError(
+          'Invitation Generation Failed',
+          'Failed to generate one-time invitation. Please try again.'
+        )
       }
     } catch (error) {
       console.error('❌ Failed to generate one-time invitation:', error)
-      // alert(`❌ Error generating one-time invitation: ${error.message}`)
+      modal.showError(
+        'Invitation Generation Error',
+        `Error generating one-time invitation: ${error.message}`
+      )
     }
-  }, [documentId, isElectron, copyToClipboardSafely, saveCollaborationMetadataImmediately])
+  }, [documentId, isElectron, copyToClipboardSafely, saveCollaborationMetadataImmediately, modal])
 
   const handleShowCollaborationInfo = useCallback(async () => {
     if (!documentId || !isElectron) return
@@ -179,23 +227,23 @@ export default function ShareControls({
       const oneTimeCount = data.links?.oneTime?.length || 0
       const usedOneTime = data.links?.oneTime?.filter(link => link.used).length || 0
 
-      // alert(
-      //   `📊 Collaboration Status\n\n` +
-      //   `Document: ${title}\n` +
-      //   `Mode: ${data.mode || 'solo'}\n` +
-      //   `Session Persistent: ${data.sessionPersistent ? 'Yes' : 'No'}\n\n` +
-      //   `📎 Links Created:\n` +
-      //   `• Permanent Links: ${permanentCount}\n` +
-      //   `• One-time Invitations: ${oneTimeCount}\n` +
-      //   `• Used Invitations: ${usedOneTime}\n\n` +
-      //   `🔒 Security:\n` +
-      //   `• Revoked Links: ${data.revoked?.length || 0}`
-      // )
+      const infoMessage = 
+        `Document: ${title}\n` +
+        `Mode: ${data.mode || 'solo'}\n` +
+        `Session Persistent: ${data.sessionPersistent ? 'Yes' : 'No'}\n\n` +
+        `Links Created:\n` +
+        `• Permanent Links: ${permanentCount}\n` +
+        `• One-time Invitations: ${oneTimeCount}\n` +
+        `• Used Invitations: ${usedOneTime}\n\n` +
+        `Security:\n` +
+        `• Revoked Links: ${data.revoked?.length || 0}`
+      
+      modal.showInfo('Collaboration Status', infoMessage)
     } catch (error) {
       console.error('❌ Failed to get collaboration info:', error)
-      // alert("❌ Failed to get collaboration information")
+      modal.showError('Info Error', 'Failed to get collaboration information')
     }
-  }, [documentId, isElectron, title])
+  }, [documentId, isElectron, title, modal])
 
   const debugCollaborationData = useCallback(async () => {
     if (!documentId || !isElectron) return
@@ -209,31 +257,30 @@ export default function ShareControls({
       const collabData = await collaborationService.getCollaborationData(documentId)
       console.log('🤝 CollaborationService data:', collabData)
 
-      // alert(
-      //   `🔍 DEBUG INFO\n\n` +
-      //   `Document ID: ${documentId.slice(0, 8)}...\n` +
-      //   `Has metadata: ${!!doc?.metadata}\n` +
-      //   `Has collaboration: ${!!doc?.metadata?.collaboration}\n` +
-      //   `Mode: ${doc?.metadata?.collaboration?.mode || 'none'}\n` +
-      //   `Enabled: ${doc?.metadata?.collaboration?.enabled || false}\n` +
-      //   `Session Persistent: ${doc?.metadata?.collaboration?.sessionPersistent || false}\n` +
-      //   `Link exists: ${!!doc?.metadata?.collaboration?.link}\n` +
-      //   `Token exists: ${!!doc?.metadata?.collaboration?.link?.token}`
-      // )
+      const debugInfo = 
+        `Document ID: ${documentId.slice(0, 8)}...\n` +
+        `Has metadata: ${!!doc?.metadata}\n` +
+        `Has collaboration: ${!!doc?.metadata?.collaboration}\n` +
+        `Mode: ${doc?.metadata?.collaboration?.mode || 'none'}\n` +
+        `Enabled: ${doc?.metadata?.collaboration?.enabled || false}\n` +
+        `Session Persistent: ${doc?.metadata?.collaboration?.sessionPersistent || false}\n` +
+        `Link exists: ${!!doc?.metadata?.collaboration?.link}\n` +
+        `Token exists: ${!!doc?.metadata?.collaboration?.link?.token}`
+      
+      modal.showInfo('Debug Info', debugInfo)
     } catch (error) {
       console.error('❌ Debug failed:', error)
-      // alert("❌ Debug failed: " + error.message)
+      modal.showError('Debug Error', `Debug failed: ${error.message}`)
     }
-  }, [documentId, isElectron])
+  }, [documentId, isElectron, modal])
 
-  // ✅ UPDATE: handleEnableCollaboration with cache clearing
+  // ✅ Enable collaboration with modal
   const handleEnableCollaboration = useCallback(async () => {
     if (isSwitching || !enableCollaboration) return;
 
     try {
       console.log('🔄 Starting collaboration from ShareControls');
 
-      // ✅ STEP 1: Generate collaboration link
       const { collaborationService } = await import("../../services/collabService");
       const linkData = await collaborationService.generateCollaborationLink(documentId);
 
@@ -243,7 +290,7 @@ export default function ShareControls({
 
       console.log('✅ Generated collaboration link:', linkData.url);
 
-      // ✅ STEP 2: Save metadata immediately using the NEW IPC method
+      // ✅ Save metadata (keep your existing logic)
       try {
         if (window.electronAPI?.documents?.updateCollaborationMetadata) {
           const collaborationData = {
@@ -272,8 +319,6 @@ export default function ShareControls({
 
           if (metadataSuccess) {
             console.log('✅ Collaboration metadata saved immediately via IPC');
-            
-            // ✅ CRITICAL: Clear cache so fresh data gets loaded
             clearDocumentCache(documentId);
             console.log('🗑️ Document cache cleared - will reload fresh metadata');
           } else {
@@ -296,32 +341,57 @@ export default function ShareControls({
         console.warn('⚠️ Collaboration mode may not persist across reloads');
       }
 
-      // ✅ STEP 3: Enable in UI state
       await enableCollaboration(linkData.token);
 
-      // ✅ STEP 4: Show success
       const copySuccess = await copyToClipboardSafely(linkData.url, "Collaboration link");
-      const message = copySuccess
-        ? `✅ Collaboration enabled!\n\nLink copied to clipboard:\n${linkData.url}`
-        : `✅ Collaboration enabled!\n\nShare this link:\n${linkData.url}`;
+      
+      modal.showSuccess(
+        'Collaboration Enabled!',
+        copySuccess 
+          ? 'Link copied to clipboard! Share it with others to collaborate.'
+          : 'Share this link with others to collaborate:',
+        {
+          copyableText: linkData.url,
+          customButtons: copySuccess ? undefined : [{
+            text: 'Copy Link',
+            variant: 'outline',
+            onClick: () => copyToClipboardSafely(linkData.url, "Collaboration link"),
+            closeOnClick: false
+          }]
+        }
+      )
 
-              // alert(message); ALLERT IS CAUSING THE EDITOR TO NET GET CURSOR!!!
       console.log('✅ Collaboration enabling completed');
 
     } catch (error) {
       console.error('❌ Collaboration enabling failed:', error);
-      // alert(`❌ Error enabling collaboration: ${error.message}`);
+      modal.showError(
+        'Collaboration Error',
+        `Error enabling collaboration: ${error.message}`
+      );
     }
-  }, [documentId, enableCollaboration, isSwitching, copyToClipboardSafely, saveCollaborationMetadataImmediately]);
+  }, [documentId, enableCollaboration, isSwitching, copyToClipboardSafely, saveCollaborationMetadataImmediately, clearDocumentCache, modal]);
 
-  // ✅ UPDATE: handleDisableCollaboration with cache clearing
+  // ✅ Disable collaboration with confirmation
   const handleDisableCollaboration = useCallback(async () => {
     if (isSwitching || !disableCollaboration) return;
+
+    // Show confirmation dialog
+    const confirmed = await modal.showConfirm(
+      'Switch to Solo Mode?',
+      'This will disable collaboration and make your document private. Others will no longer be able to access it.',
+      {
+        confirmText: 'Switch to Solo',
+        cancelText: 'Keep Collaborating'
+      }
+    )
+
+    if (!confirmed) return;
 
     try {
       console.log('🔄 Disabling collaboration from ShareControls');
 
-      // ✅ STEP 1: Save metadata immediately using NEW IPC method
+      // ✅ Save metadata (keep your existing logic)
       try {
         if (window.electronAPI?.documents?.updateCollaborationMetadata) {
           const collaborationData = {
@@ -329,7 +399,7 @@ export default function ShareControls({
             mode: 'solo',
             sessionPersistent: false,
             lastActivity: new Date().toISOString(),
-            link: null, // Clear the collaboration link
+            link: null,
             schemaVersion: 2
           };
 
@@ -340,8 +410,6 @@ export default function ShareControls({
 
           if (metadataSuccess) {
             console.log('✅ Solo mode metadata saved immediately via IPC');
-            
-            // ✅ CRITICAL: Clear cache so fresh data gets loaded
             clearDocumentCache(documentId);
             console.log('🗑️ Document cache cleared - will reload fresh metadata');
           } else {
@@ -362,17 +430,37 @@ export default function ShareControls({
         console.warn('⚠️ Metadata save failed (non-critical for disable):', metadataError);
       }
 
-      // ✅ STEP 2: Disable in UI state
       await disableCollaboration();
 
-      // alert('📝 Switched to solo mode.\n\nYour document is now private.');
+      modal.showSuccess(
+        'Switched to Solo Mode',
+        'Your document is now private. Collaboration has been disabled.'
+      );
+      
       console.log('✅ Collaboration disabling completed');
 
     } catch (error) {
       console.error('❌ Disable collaboration error:', error);
-      // alert(`❌ Error switching to solo mode: ${error.message}`);
+      modal.showError(
+        'Mode Switch Error', 
+        `Error switching to solo mode: ${error.message}`
+      );
     }
-  }, [documentId, disableCollaboration, isSwitching, saveCollaborationMetadataImmediately]);
+  }, [documentId, disableCollaboration, isSwitching, saveCollaborationMetadataImmediately, clearDocumentCache, modal]);
+
+  const handleCopyCurrentLink = useCallback(async () => {
+    try {
+      const url = window.location.href
+      const copySuccess = await copyToClipboardSafely(url, "Current collaboration link")
+      
+      if (copySuccess) {
+        modal.showSuccess('Link Copied!', 'Current collaboration link copied to clipboard!')
+      }
+    } catch (error) {
+      console.error('Failed to copy current link:', error)
+      modal.showError('Copy Failed', 'Failed to copy current link')
+    }
+  }, [copyToClipboardSafely, modal]);
 
   return (
     <div className="flex items-center gap-2">
@@ -390,35 +478,13 @@ export default function ShareControls({
         </Button>
       ) : (
         <div className="flex gap-2">
-<Button
-  onClick={async () => {
-    try {
-      const url = window.location.href
-      const copySuccess = await copyToClipboardSafely(url, "Current collaboration link")
-      
-      // ✅ RETURN: Instead of alert, return the link info
-      return {
-        success: true,
-        copied: copySuccess,
-        url: url,
-        message: copySuccess ? 'Current collaboration link copied!' : 'Current collaboration link ready'
-      }
-    } catch (error) {
-      console.error('Failed to copy current link:', error)
-      // ✅ RETURN: Error info instead of alert
-      return {
-        success: false,
-        error: error.message,
-        message: 'Failed to copy current link'
-      }
-    }
-  }}
-  className="gap-2 bg-green-500 hover:bg-green-600"
->
-  <Copy size={16} />
-  <span className="hidden sm:inline">Copy Current</span>
-</Button>
-
+          <Button
+            onClick={handleCopyCurrentLink}
+            className="gap-2 bg-green-500 hover:bg-green-600"
+          >
+            <Copy size={16} />
+            <span className="hidden sm:inline">Copy Current</span>
+          </Button>
 
           <Button
             variant="outline"
