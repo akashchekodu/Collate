@@ -2,17 +2,26 @@
   "name": "p2p-signaling-server",
   "version": "1.0.0",
   "type": "module",
-  "description": "Pure P2P signaling server for collaborative document editing - no database storage",
+  "description": "P2P Signaling Server for Collaborative Text Editor",
+  "main": "p2p-signaling-server.js",
   "scripts": {
     "start": "node p2p-signaling-server.js",
-    "dev": "node p2p-signaling-server.js"
+    "dev": "node --watch p2p-signaling-server.js",
+    "test": "node test/test-client.js"
   },
   "dependencies": {
     "express": "^4.18.2",
+    "ws": "^8.14.2",
     "cors": "^2.8.5",
-    "ws": "^8.14.2"
+    "jsonwebtoken": "^9.0.2"
   },
-  "keywords": ["p2p", "signaling", "webrtc", "collaboration", "no-database"],
-  "author": "P2P Notebook Team",
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": ["webrtc", "signaling", "p2p", "collaboration", "real-time"],
+  "author": "Your Name",
   "license": "MIT"
 }
