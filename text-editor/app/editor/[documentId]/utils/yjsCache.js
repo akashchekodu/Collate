@@ -23,8 +23,8 @@ function getGlobalCache() {
 function getWebRTCConfig(token = null) {
   return {
     signaling: token
-      ? [`ws://localhost:3003/signal?token=${encodeURIComponent(token)}`]
-      : ["ws://localhost:3003/signal"],
+      ? [`wss://signaling-server-production-af26.up.railway.app?token=${encodeURIComponent(token)}`]
+      : ["wss://signaling-server-production-af26.up.railway.app/signal"],
     maxConn: 20,
     filterBcConns: true,
     peerOpts: {

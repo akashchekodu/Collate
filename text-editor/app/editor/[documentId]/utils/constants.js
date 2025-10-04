@@ -50,8 +50,8 @@ function getWebRTCConfig(token = null) {
   const baseConfig = {
     // ✅ CRITICAL FIX: Ensure token is properly appended
     signaling: token 
-      ? [`ws://localhost:3003/signal?token=${encodeURIComponent(token)}`]
-      : ["ws://localhost:3003/signal"],
+      ? [`wss://signaling-server-production-af26.up.railway.app/signal?token=${encodeURIComponent(token)}`]
+      : ["wss://signaling-server-production-af26.up.railway.app/signal"],
     maxConn: 20,
     filterBcConns: true,
     peerOpts: {
