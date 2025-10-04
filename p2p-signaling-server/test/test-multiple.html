@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Multi-User Signaling Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .test-container { max-width: 1200px; margin: 0 auto; }
+        .controls { background: white; padding: 15px; margin-bottom: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .peer-container { 
+            border: 2px solid #ddd; 
+            margin: 10px; 
+            padding: 15px; 
+            width: 48%; 
+            display: inline-block; 
+            vertical-align: top; 
+            background: white;
+            border-radius: 8px;
+        }
+        .connected { border-color: #28a745; }
+        .disconnected { border-color: #dc3545; }
+        .connecting { border-color: #ffc107; }
+        .messages { 
+            height: 300px; 
+            overflow-y: auto; 
+            background: #f8f9fa; 
+            padding: 10px; 
+            margin: 10px 0; 
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .message-success { color: #28a745; }
+        .message-error { color: #dc3545; }
+        .message-info { color: #17a2b8; }
+        .message-warning { color: #ffc107; }
+        
+        button { padding: 8px 12px; margin: 3px; cursor: pointer; border: none; border-radius: 4px; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-warning { background: #ffc107; color: black; }
+        .btn-secondary { background: #6c757d; color: white; }
+        
+        input { margin: 5px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        .status { font-weight: bold; margin: 10px 0; }
+        .stats { background: #e9ecef; padding: 10px; margin: 10px 0; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🚀 Enhanced Multi-User Signaling Test</h1>
+        
+        <!-- Global Controls -->
+        <div class="controls">
+            <h3>Global Test Controls</h3>
+            <button class="btn-primary" onclick="connectAll()">Connect All Peers</button>
+            <button class="btn-success" onclick="joinAllRooms()">Join All to Same Room</button>
+            <button class="btn-warning" onclick="testWebRTCSignaling()">Test WebRTC Signaling</button>
+            <button class="btn-secondary" onclick="checkServerStatus()">Check Server Status</button>
+            <button class="btn-danger" onclick="disconnectAll()">Disconnect All</button>
+            <button onclick="clearAllMessages()">Clear Messages</button>
+            
+            <div class="stats">
+                <strong>Server Status:</strong> <span id="serverStatus">Unknown</span> | 
+                <strong>Active Rooms:</strong> <span id="activeRooms">0</span> |
+                <strong>Total Peers:</strong> <span id="totalPeers">0</span>
+            </div>
+        </div>
+
+        <!-- Peer 1 Container -->
+        <div id="peer1" class="peer-container disconnected">
+            <h3>👩 Peer 1 - Alice</h3>
+            <div class="status">Status: Disconnected</div>
+            
+            <div>
+                <input type="text" placeholder="Document ID" value="test-doc-123" class="doc-id" style="width: 200px;">
+                <input type="text" placeholder="Peer Name" value="Alice" class="peer-name" style="width: 100px;">
+            </div>
+            
+            <div>
+                <button class="btn-primary" onclick="connectPeer(1)">Connect</button>
+                <button class="btn-success" onclick="joinRoom(1)">Join Room</button>
+                <button class="btn-warning" onclick="sendHeartbeat(1)">Heartbeat</button>
+                <button class="btn-danger" onclick="disconnectPeer(1)">Disconnect</button>
+            </div>
+            
+            <div>
+                <button onclick="requestDocumentState(1)">Request Doc State</button>
+                <button onclick="sendWebRTCOffer(1)">Send WebRTC Offer</button>
+                <button onclick="clearMessages(1)">Clear</button>
+            </div>
+            
+            <div class="messages" id="messages1"></div>
+        </div>
+
+        <!-- Peer 2 Container -->
+        <div id="peer2" class="peer-container disconnected">
+            <h3>👨 Peer 2 - Bob</h3>
+            <div class="status">Status: Disconnected</div>
+            
+            <div>
+                <input type="text" placeholder="Document ID" value="test-doc-123" class="doc-id" style="width: 200px;">
+                <input type="text" placeholder="Peer Name" value="Bob" class="peer-name" style="width: 100px;">
+            </div>
+            
+            <div>
+                <button class="btn-primary" onclick="connectPeer(2)">Connect</button>
+                <button class="btn-success" onclick="joinRoom(2)">Join Room</button>
+                <button class="btn-warning" onclick="sendHeartbeat(2)">Heartbeat</button>
+                <button class="btn-danger" onclick="disconnectPeer(2)">Disconnect</button>
+            </div>
+            
+            <div>
+                <button onclick="requestDocumentState(2)">Request Doc State</button>
+                <button onclick="sendWebRTCAnswer(2)">Send WebRTC Answer</button>
+                <button onclick="clearMessages(2)">Clear</button>
+            </div>
+            
+            <div class="messages" id="messages2"></div>
+        </div>
+    </div>
+
+    <script>
+        const peers = {
+            1: { ws: null, peerId: 'alice-' + Date.now(), name: 'Alice', connected: false },
+            2: { ws: null, peerId: 'bob-' + Date.now(), name: 'Bob', connected: false }
+        };
+
+        // Enhanced token generation with error handling
+        async function generateTestToken(peerId, documentId) {
+            try {
+                addPeerMessage(0, `🔑 Generating token for ${peerId}...`, 'info');
+                
+                const response = await fetch('http://localhost:3003/generate-test-token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ peerId, documentId })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                addPeerMessage(0, `✅ Token generated successfully`, 'success');
+                return data.token;
+            } catch (error) {
+                addPeerMessage(0, `❌ Token generation failed: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        // Enhanced peer connection
+        async function connectPeer(peerNum) {
+            const peer = peers[peerNum];
+            const container = document.getElementById(`peer${peerNum}`);
+            const status = container.querySelector('.status');
+            const documentId = container.querySelector('.doc-id').value;
+            const peerName = container.querySelector('.peer-name').value;
+            
+            if (peer.ws) {
+                peer.ws.close();
+            }
+
+            try {
+                container.className = 'peer-container connecting';
+                status.textContent = 'Status: Connecting...';
+                addPeerMessage(peerNum, `🔄 Connecting ${peerName} to server...`, 'info');
+
+                const token = await generateTestToken(peer.peerId, documentId);
+                peer.ws = new WebSocket(`ws://localhost:3003/signal?token=${token}`);
+
+                peer.ws.onopen = () => {
+                    status.textContent = 'Status: Connected ✅';
+                    container.className = 'peer-container connected';
+                    peer.connected = true;
+                    addPeerMessage(peerNum, `✅ ${peerName} connected successfully!`, 'success');
+                };
+
+                peer.ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    handlePeerMessage(peerNum, message);
+                };
+
+                peer.ws.onclose = (event) => {
+                    status.textContent = 'Status: Disconnected ❌';
+                    container.className = 'peer-container disconnected';
+                    peer.connected = false;
+                    addPeerMessage(peerNum, `❌ ${peerName} disconnected (${event.code}: ${event.reason})`, 'error');
+                };
+
+                peer.ws.onerror = (error) => {
+                    addPeerMessage(peerNum, `💥 Connection error: ${error.message}`, 'error');
+                };
+
+            } catch (error) {
+                status.textContent = 'Status: Connection Failed ❌';
+                container.className = 'peer-container disconnected';
+                addPeerMessage(peerNum, `💥 Connection failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Enhanced message handling
+        function handlePeerMessage(peerNum, message) {
+            const peer = peers[peerNum];
+            
+            switch (message.type) {
+                case 'auth_success':
+                    addPeerMessage(peerNum, `🔐 Authentication successful for ${message.peerId}`, 'success');
+                    // Auto-join room after successful auth
+                    setTimeout(() => joinRoom(peerNum), 500);
+                    break;
+                    
+                case 'existing_peers':
+                    addPeerMessage(peerNum, `👥 Found ${message.peers.length} existing peers: ${message.peers.map(p => p.peerInfo?.name).join(', ')}`, 'info');
+                    break;
+                    
+                case 'peer_joined':
+                    addPeerMessage(peerNum, `👋 ${message.peerInfo?.name} (${message.peerId}) joined the room`, 'success');
+                    break;
+                    
+                case 'peer_left':
+                    addPeerMessage(peerNum, `👋 Peer ${message.peerId} left the room`, 'warning');
+                    break;
+                    
+                case 'join_success':
+                    addPeerMessage(peerNum, `🏠 Successfully joined room ${message.documentId} (${message.roomSize} peers)`, 'success');
+                    break;
+                    
+                case 'webrtc_offer':
+                    addPeerMessage(peerNum, `📡 Received WebRTC offer from ${message.fromPeerId}`, 'info');
+                    break;
+                    
+                case 'webrtc_answer':
+                    addPeerMessage(peerNum, `📡 Received WebRTC answer from ${message.fromPeerId}`, 'info');
+                    break;
+                    
+                case 'document_state_request':
+                    addPeerMessage(peerNum, `📋 Document state requested by ${message.requestingPeerId}`, 'info');
+                    break;
+                    
+                case 'error':
+                    addPeerMessage(peerNum, `❌ Server error: ${message.message}`, 'error');
+                    break;
+                    
+                default:
+                    addPeerMessage(peerNum, `📨 ${message.type}: ${JSON.stringify(message, null, 2)}`, 'info');
+            }
+        }
+
+        function joinRoom(peerNum) {
+            const peer = peers[peerNum];
+            const container = document.getElementById(`peer${peerNum}`);
+            const documentId = container.querySelector('.doc-id').value;
+            const peerName = container.querySelector('.peer-name').value;
+
+            if (!peer.ws || peer.ws.readyState !== WebSocket.OPEN) {
+                addPeerMessage(peerNum, '❌ Not connected to server!', 'error');
+                return;
+            }
+
+            const message = {
+                type: 'join_document',
+                documentId: documentId,
+                peerId: peer.peerId,
+                peerInfo: { name: peerName }
+            };
+
+            peer.ws.send(JSON.stringify(message));
+            addPeerMessage(peerNum, `📤 Joining room: ${documentId}`, 'info');
+        }
+
+        function sendHeartbeat(peerNum) {
+            const peer = peers[peerNum];
+            
+            if (!peer.ws || peer.ws.readyState !== WebSocket.OPEN) {
+                addPeerMessage(peerNum, '❌ Not connected!', 'error');
+                return;
+            }
+
+            const message = {
+                type: 'peer_heartbeat',
+                peerId: peer.peerId,
+                timestamp: Date.now()
+            };
+
+            peer.ws.send(JSON.stringify(message));
+            addPeerMessage(peerNum, '💓 Heartbeat sent', 'info');
+        }
+
+        function requestDocumentState(peerNum) {
+            const peer = peers[peerNum];
+            const container = document.getElementById(`peer${peerNum}`);
+            const documentId = container.querySelector('.doc-id').value;
+            
+            if (!peer.ws || peer.ws.readyState !== WebSocket.OPEN) {
+                addPeerMessage(peerNum, '❌ Not connected!', 'error');
+                return;
+            }
+
+            const message = {
+                type: 'request_document_state',
+                documentId: documentId,
+                peerId: peer.peerId
+            };
+
+            peer.ws.send(JSON.stringify(message));
+            addPeerMessage(peerNum, '📋 Document state requested', 'info');
+        }
+
+        function sendWebRTCOffer(peerNum) {
+            const peer = peers[peerNum];
+            const targetPeer = peerNum === 1 ? peers[2] : peers[1];
+            
+            if (!peer.ws || peer.ws.readyState !== WebSocket.OPEN) {
+                addPeerMessage(peerNum, '❌ Not connected!', 'error');
+                return;
+            }
+
+            const message = {
+                type: 'webrtc_offer',
+                targetPeerId: targetPeer.peerId,
+                fromPeerId: peer.peerId,
+                sdp: 'fake-sdp-offer-data-for-testing-' + Date.now(),
+                timestamp: Date.now()
+            };
+
+            peer.ws.send(JSON.stringify(message));
+            addPeerMessage(peerNum, `📡 WebRTC offer sent to ${targetPeer.name}`, 'info');
+        }
+
+        function sendWebRTCAnswer(peerNum) {
+            const peer = peers[peerNum];
+            const targetPeer = peerNum === 1 ? peers[2] : peers[1];
+            
+            if (!peer.ws || peer.ws.readyState !== WebSocket.OPEN) {
+                addPeerMessage(peerNum, '❌ Not connected!', 'error');
+                return;
+            }
+
+            const message = {
+                type: 'webrtc_answer',
+                targetPeerId: targetPeer.peerId,
+                fromPeerId: peer.peerId,
+                sdp: 'fake-sdp-answer-data-for-testing-' + Date.now(),
+                timestamp: Date.now()
+            };
+
+            peer.ws.send(JSON.stringify(message));
+            addPeerMessage(peerNum, `📡 WebRTC answer sent to ${targetPeer.name}`, 'info');
+        }
+
+        function disconnectPeer(peerNum) {
+            const peer = peers[peerNum];
+            if (peer.ws) {
+                peer.ws.close();
+                peer.ws = null;
+                peer.connected = false;
+            }
+        }
+
+        // Global control functions
+        function connectAll() {
+            addPeerMessage(0, '🚀 Connecting all peers...', 'info');
+            connectPeer(1);
+            setTimeout(() => connectPeer(2), 1000);
+        }
+
+        function joinAllRooms() {
+            setTimeout(() => {
+                joinRoom(1);
+                joinRoom(2);
+            }, 500);
+        }
+
+        function testWebRTCSignaling() {
+            addPeerMessage(0, '📡 Testing WebRTC signaling flow...', 'info');
+            setTimeout(() => sendWebRTCOffer(1), 500);
+            setTimeout(() => sendWebRTCAnswer(2), 1500);
+        }
+
+        function disconnectAll() {
+            disconnectPeer(1);
+            disconnectPeer(2);
+            addPeerMessage(0, '🔌 All peers disconnected', 'warning');
+        }
+
+        async function checkServerStatus() {
+            try {
+                const response = await fetch('http://localhost:3003/status');
+                const status = await response.json();
+                
+                document.getElementById('serverStatus').textContent = 'Online ✅';
+                document.getElementById('activeRooms').textContent = status.activeDocuments.length;
+                document.getElementById('totalPeers').textContent = status.totalPeers;
+                
+                addPeerMessage(0, `📊 Server Status: ${status.totalPeers} peers in ${status.activeDocuments.length} rooms`, 'info');
+                console.log('Full server status:', status);
+            } catch (error) {
+                document.getElementById('serverStatus').textContent = 'Offline ❌';
+                addPeerMessage(0, `❌ Server status check failed: ${error.message}`, 'error');
+            }
+        }
+
+        function addPeerMessage(peerNum, message, type = 'info') {
+            let messagesContainer;
+            
+            if (peerNum === 0) {
+                // Global message - add to both containers
+                addPeerMessage(1, message, type);
+                addPeerMessage(2, message, type);
+                return;
+            } else {
+                messagesContainer = document.getElementById(`messages${peerNum}`);
+            }
+
+            const div = document.createElement('div');
+            div.className = `message-${type}`;
+            div.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+            messagesContainer.appendChild(div);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function clearMessages(peerNum) {
+            document.getElementById(`messages${peerNum}`).innerHTML = '';
+        }
+
+        function clearAllMessages() {
+            clearMessages(1);
+            clearMessages(2);
+        }
+
+        // Auto-start testing
+        window.addEventListener('load', () => {
+            addPeerMessage(0, '🎉 Multi-User Signaling Test Ready!', 'success');
+            addPeerMessage(0, '💡 Click "Connect All Peers" to start testing', 'info');
+            
+            // Check server status on load
+            checkServerStatus();
+            
+            // Auto-connect after 2 seconds
+            setTimeout(connectAll, 2000);
+        });
+
+        // Periodic server status updates
+        setInterval(checkServerStatus, 10000);
+    </script>
+</body>
+</html>

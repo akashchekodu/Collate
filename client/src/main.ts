@@ -212,6 +212,32 @@ private async handleSharedDocument(shareCode: string, user: User) {
 
           <!-- Editor Container -->
           <div style="flex: 1; background: white; margin: 24px; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden; display: flex; flex-direction: column;">
+              <div id="editor-menu">
+            <select id="heading-select">
+              <option value="">Paragraph</option>
+              <option value="1">Heading 1</option>
+              <option value="2">Heading 2</option>
+              <option value="3">Heading 3</option>
+            </select>
+            <button data-command="toggleBold" title="Bold"><strong>B</strong></button>
+            <button data-command="toggleItalic" title="Italic"><em>I</em></button>
+            <button data-command="toggleUnderline" title="Underline"><u>U</u></button>
+            <button data-command="toggleStrike" title="Strikethrough"><s>S</s></button>
+            <div style="border-left: 1px solid #d1d5db; height: 24px; margin: 0 4px;"></div>
+            <button data-command="toggleBulletList" title="Bullet List">•</button>
+            <button data-command="toggleOrderedList" title="Numbered List">1.</button>
+            <div style="border-left: 1px solid #d1d5db; height: 24px; margin: 0 4px;"></div>
+            <button data-command="toggleCode" title="Code">&lt;/&gt;</button>
+            <button data-command="toggleLink" title="Link">🔗</button>
+            <div style="border-left: 1px solid #d1d5db; height: 24px; margin: 0 4px;"></div>
+            <button data-command="setSuperscript" title="Superscript">x²</button>
+            <button data-command="setSubscript" title="Subscript">x₂</button>
+            <div style="border-left: 1px solid #d1d5db; height: 24px; margin: 0 4px;"></div>
+            <button data-command="alignLeft" title="Align Left">⬅</button>
+            <button data-command="alignCenter" title="Align Center">⬌</button>
+            <button data-command="alignRight" title="Align Right">➡</button>
+          </div>
+
             <div id="editor" style="flex: 1;"></div>
           </div>
         </div>
@@ -310,35 +336,39 @@ private async handleSharedDocument(shareCode: string, user: User) {
     }
   }
 
-  private async openDocument(documentId: string) {
-    const user = this.auth.getUser();
-    if (!user) return;
+private async openDocument(documentId: string) {
+  const user = this.auth.getUser();
+  if (!user) return;
 
-    try {
-      this.cleanup(); // Clean up previous editor
-      
-      this.currentDocument = await this.documentManager.getDocument(documentId);
-      if (!this.currentDocument) {
-        throw new Error('Document not found');
-      }
+  try {
+    this.cleanup(); // remove old editor if exists
 
-      // Initialize P2P editor
-      await this.editor.initialize(documentId, user);
-      
-      // Update UI
-      const titleInput = document.getElementById('document-title') as HTMLInputElement;
-      if (titleInput) {
-        titleInput.value = this.currentDocument.title;
-      }
-      
-      // Update active state in document list
-      this.renderDocumentList();
-      
-    } catch (error) {
-      console.error('Error opening document:', error);
-      this.showNotification('Failed to open document', 'error');
-    }
+    // Load the document
+    this.currentDocument = await this.documentManager.getDocument(documentId);
+    if (!this.currentDocument) throw new Error('Document not found');
+
+    // Ensure main app HTML is rendered
+    this.renderMainApp(user);
+    this.setupEventListeners();
+
+    // Now the editor container exists
+    const editorContainer = document.getElementById('editor');
+    if (!editorContainer) throw new Error('Editor container not found');
+
+    // Initialize P2P editor
+    await this.editor.initialize(documentId, user, editorContainer);
+
+    // Set document title input
+    const titleInput = document.getElementById('document-title') as HTMLInputElement;
+    if (titleInput) titleInput.value = this.currentDocument.title;
+
+    this.renderDocumentList();
+  } catch (error) {
+    console.error('Error opening document:', error);
+    this.showNotification('Failed to open document', 'error');
   }
+}
+
 
   private async updateDocumentTitle(title: string) {
     if (!this.currentDocument) return;
